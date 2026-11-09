@@ -1,7 +1,16 @@
-# Манифест подключения внешних сервисов к ИИ-продавцу
+# Внешние интеграции ИИ-продавца
 
-> Этот файл документирует архитектурные решения и спецификации интеграции каждого внешнего сервиса (мессенджеров, CRM, 1С, маркетплейсов и др.) с ядром ИИ-продавца.
-> Для каждого сервиса описывается: протокол взаимодействия, маппинг сущностей, точки расширения ядра, ограничения и нюансы.
+> **Источник истины по составу и архитектуре MVP-1 — [BACKEND_MVP_TZ.md](./BACKEND_MVP_TZ.md).** При расхождении применяются требования ТЗ; этот документ не утверждает новые функции, публичные API или архитектурные решения.
+>
+> В MVP-1 каналом является только MAX. Ниже сохранена подробная спецификация MAX; разделы Ozon, Avito, Bitrix24, примеры других каналов и расширения общего адаптерного фреймворка — материалы для последующих этапов, не объём MVP-1. MVP-1 использует один выбранный LLM provider за расширяемым внутренним интерфейсом: provider routing, автоматический fallback и выбор поставщика на уровне проекта/навыка не входят в MVP-1. Конкретный поставщик LLM пока не утверждён.
+>
+> Каталог MVP-1 импортируется из CSV/XLSX одного авторитетного источника. YML, API/живые источники, расписание синхронизации, несколько источников и их приоритеты относятся к последующим этапам. Заявки MVP-1 хранятся только внутри сервиса и создаются только после явного подтверждения покупателя; передача в CRM не входит в MVP-1.
+>
+> Архитектурный контекст MVP-1: модульный монолит непосредственно на Linux под `systemd`, без контейнеризации. PostgreSQL — источник истины для business state, Inbox, durable jobs и Outbox; Redis необязателен, worker продолжает polling PostgreSQL при его недоступности; Qdrant хранит производный индекс.
+>
+> До AI-чата требуется обязательная форма ПДн. ПДн не передаются LLM: данные формы и прямые идентификаторы покупателя исключаются из контекста модели; свободные сообщения очищаются от ПДн до обычного хранения и отправки модели. Если надёжность очистки не подтверждена, исходное сообщение модели не отправляется. MAX payload и примеры ниже не являются разрешением передавать такие данные модели.
+>
+> Детали endpoint, схем, лимитов, тарифов и поведения любого provider, включая MAX и LLM, требуется перепроверить по его актуальной официальной документации перед реализацией. Provider-specific спецификации ниже сохраняются как технические справочные материалы, а не как гарантия актуальности. Пути вида `/api/v1/...` и кодовые фрагменты — иллюстративные внутренние контракты; они сами по себе не утверждают публичный API для покупателей или сторонних клиентов. Публичный API управления/клиентский API определяется отдельно в согласованном API-контракте.
 >
 > Все входящие данные нормализуются в `UnifiedEvent`. Примеры внутри описаний каналов, помеченные как message event, иллюстрируют только message-specific payload; CRM-, lifecycle-, call-, status- и системные события остаются отдельными типами событий и не получают фиктивный пустой текст.
 
@@ -13,19 +22,19 @@
 **Базовый URL:** `https://platform-api2.max.ru`  
 **Авторизация:** `Authorization: <access_token>` (header)  
 **Тип канала:** `max`  
-**Статус:** 🟢 Планируется к реализации
+**Статус:** ✅ Единственный канал MVP-1; реализация и фактические API-ограничения проверяются по официальной документации MAX.
 
 ---
 
-### 1.1. Архитектурное решение (согласно core-architecture.md)
+### 1.1. Решения и границы MVP-1
 
 | Принцип ядра | Реализация для MAX |
 |--------------|-------------------|
 | **F1** Account → Project | Канал привязан к `project_id`. Один проект = один бот MAX (один токен). Несколько проектов = несколько ботов. |
 | **F3** Data Providers | Адаптер MAX не обращается к БД напрямую. Диалоговый движок использует `ProductDataProvider`, `OrderProvider`, `CustomerDataProvider`. |
-| **F6** Function Registry | Функции бота (поиск товара, статус заказа, запись на консультацию) регистрируются в реестре с условиями доступности (тариф, включена ли в проекте). |
+| **F6** Function Registry | MVP-1: поиск/получение товара из импортированного CSV/XLSX-каталога, ответы по базе знаний, создание внутренней заявки после явного подтверждения и передача оператору. Статус внешнего заказа, запись на консультацию и сбор контактов как отдельная функция здесь не утверждаются. |
 | **F7** Unified Response + Channel Capabilities | Единый формат ответа ядра → конвертер в формат MAX (текст, inline-клавиатуры, медиа, share-ссылки). |
-| **F14** Multi-provider LLM | Выбор модели на уровне проекта/навыка (GigaChat / YandexGPT / OpenAI-compat). |
+| **LLM provider** | В MVP-1 один выбранный provider за расширяемым внутренним интерфейсом; конкретный поставщик не утверждён. Нет выбора provider на уровне проекта/навыка, маршрутизации или автоматического fallback между providers. |
 | **F27** Skills (goal/flow) | Сценарии продаж реализуются как навыки: `goal` (свободный диалог с инструментами) или `flow` (детерминированные слоты). |
 
 ---
@@ -57,13 +66,14 @@
                                               │  └───────┬────────┘  │
                                               │          │           │
                                               │  ┌───────┴────────┐  │
-                                              │  │ LLM Router     │  │
+                                              │  │ LLM Provider  │  │
                                               │  │ Data Providers │  │
                                               │  └────────────────┘  │
                                               └──────────────────────┘
 ```
 
-**Режим получения обновлений:** **Webhook (рекомендован MAX)**  
+**Режим получения обновлений MVP-1:** **Webhook (рекомендован MAX)**
+- В MVP-1 применяется webhook; получение входящих обновлений через MAX long polling не является рабочим режимом MVP-1.
 - Long Polling (`/updates`) — только для разработки, не для продакшена
 - Webhook и Long Polling **нельзя использовать одновременно**
 - Сервер вебхука **обязательно на порту 443** (HTTPS)
@@ -104,7 +114,7 @@
 | `user_added` / `user_removed` | Участники в групповом чате | `chat_id`, `user`, `is_channel` | Для групповых чатов (если бот админ с `read_all_messages`) |
 | `bot_added` / `bot_removed` | Бот добавлен/удалён из чата | `chat_id`, `user`, `is_channel` | Регистрация/дерегистрация канала в проекте |
 
-**Не запускают Dialog Runtime в MVP:** `comment_*`, `dialog_cleared`, `dialog_removed`, `dialog_muted`, `dialog_unmuted`, `chat_title_changed`, `bot_admin_permissions_changed`. Если подписка/endpoint получает такие updates, адаптер нормализует их в `conversation_lifecycle`/`channel_lifecycle` или `unsupported`, сохраняет/учитывает согласно политике аудита и не превращает в сообщение с пустым текстом. Изменение прав бота должно обновлять health/capability state, если оно доступно через API.
+**Не запускают Dialog Runtime в MVP-1:** `comment_*`, `dialog_cleared`, `dialog_removed`, `dialog_muted`, `dialog_unmuted`, `chat_title_changed`, `bot_admin_permissions_changed`. Если подписка/endpoint получает такие updates, адаптер нормализует их в `conversation_lifecycle`/`channel_lifecycle` или `unsupported`, сохраняет/учитывает согласно политике аудита и не превращает в сообщение с пустым текстом. Изменение прав бота должно обновлять health/capability state, если оно доступно через API.
 
 ---
 
@@ -279,34 +289,35 @@ VALUES ('max:12345', 'max', '12345');
 
 ---
 
-### 1.8. Функции, доступные в MAX (реестр функций F6)
+### 1.8. Функции MAX и границы MVP-1 (реестр функций F6)
 
-| Функция | Описание | Параметры | Требования |
-|---------|----------|-----------|------------|
-| `search_products` | Поиск товаров по запросу/фильтрам | `query`, `category`, `price_min`, `price_max`, `attributes`, `limit` | `ProductDataProvider`, тариф с каталогом |
-| `get_product` | Карточка товара по ID/SKU | `product_id` \| `sku` | `ProductDataProvider` |
-| `compare_products` | Сравнение товаров | `product_ids[]`, `attributes[]` | `ProductDataProvider` |
-| `check_stock` | Проверка наличия/остатков | `product_id`, `warehouse_id?` | `ProductDataProvider`, тариф со складом |
-| `get_order_status` | Статус заказа | `order_id` | `OrderProvider`, тариф с заказами |
-| `get_customer_orders` | История заказов покупателя | `customer_id`, `limit` | `OrderProvider` + `CustomerDataProvider` |
-| `book_appointment` | Запись на консультацию/замер | `slot_id`, `customer_data` | Настройка слотов в проекте, тариф |
-| `handoff_to_operator` | Эскалация к оператору | `reason`, `summary` | Настроенная эскалация, тариф |
-| `collect_contacts` | Сбор контактов формой (F9) | `fields[]` (phone, email, name) | Включена в навыке/правиле |
+MVP-1 разрешает модели только функции сценария: поиск/получение товара из импортированного каталога, ответ по базе знаний, создание внутренней заявки **только после явного подтверждения покупателя** и передачу оператору. Заявка сохраняется в PostgreSQL и доступна авторизованным пользователям проекта; интеграционной отправки в CRM нет.
 
-**Callback payload формат для вызова функций через кнопки:**
+| Функция | Описание | Параметры | Статус / требования |
+|---------|----------|-----------|---------------------|
+| `search_products` | Поиск товаров по запросу/фильтрам | `query`, `category`, `price_min`, `price_max`, `attributes`, `limit` | MVP-1: каталог из одного авторитетного CSV/XLSX-источника |
+| `get_product` | Карточка товара по ID/SKU | `product_id` \| `sku` | MVP-1: только импортированный каталог |
+| `answer_from_knowledge` | Ответ по базе знаний | Поиск по базе знаний проекта | MVP-1 |
+| `create_internal_request` | Создать внутреннюю заявку | Данные заявки и явное подтверждение покупателя | MVP-1: только локальное сохранение; не отправлять в CRM |
+| `handoff_to_operator` | Эскалация к оператору | `reason`, `summary` | MVP-1: настроенная передача оператору |
+| `compare_products`, `check_stock` | Сравнение / отдельная проверка остатков | По товарам/складу | Не входят в утверждённый набор функций MVP-1; не включать без отдельного согласования в ТЗ |
+| `get_order_status`, `get_customer_orders`, `book_appointment`, `collect_contacts` | Внешний заказ, история заказов, запись и сбор контактов | Детали зависят от будущей интеграции | Не часть утверждённого набора функций MVP-1; эта справочная запись не подразумевает сбор контактов или соответствующие подключения |
+
+**Пример callback payload** (разрешённые функции ограничиваются набором MVP-1):
 ```
 "payload": "fn:search_products:{\"query\":\"кроссовки\",\"limit\":5}"
 "payload": "fn:get_product:{\"sku\":\"NIKE-AM-270-42\"}"
-"payload": "fn:book_appointment:{\"slot_id\":\"slot_123\"}"
 ```
 
-Адаптер парсит `fn:<function_name>:<json_args>` и вызывает функцию через реестр.
+Адаптер парсит `fn:<function_name>:<json_args>` и передаёт вызов реестру разрешённых функций. Неизвестные/неразрешённые функции отклоняются. Сам вызов функции или нажатие callback не является подтверждением заявки: создание разрешено только после явно выраженного подтверждения покупателя, проверенного в состоянии диалога.
+
+**ПДн и MAX payload:** вложения `contact`, текстовые контакты, имена и другие прямые идентификаторы могут содержать ПДн. Они не поступают в LLM. Свободный текст очищается от ПДн до обычного хранения и отправки модели; если надёжность очистки не подтверждена, исходное сообщение модели не отправляется. Обязательная форма ПДн должна быть пройдена до начала AI-чата.
 
 ---
 
 ### 1.9. Настройка вебхука (Deployment)
 
-**Эндпоинт в ядре:** `POST /api/v1/webhooks/max/{channel_id}`
+**Иллюстративный внутренний webhook ingress:** `POST /api/v1/webhooks/max/{channel_id}`. Это адрес приёма вебхука MAX, а не публичный API для покупателей; итоговые маршруты API фиксируются отдельно.
 
 ```python
 # Псевдокод обработчика: фиксирует событие до ACK; обработку выполняет worker
@@ -324,7 +335,8 @@ async def max_webhook(channel_id: str, request: Request):
         raise HTTPException(400, "Invalid JSON payload")
     update = parse_update(payload)  # pydantic model с discriminator
     
-    # 3. Нормализовать все поддерживаемые update types (не только сообщения)
+    # 3. Нормализовать поддерживаемые MAX update types (не только сообщения).
+    # Свободный текст очистить от ПДн до обычного хранения; raw payload не передавать LLM.
     events = max_adapter.parse_update(update, channel_id)
     # Inbox + background_jobs фиксируются транзакционно и дедуплицируются
     await inbox_service.persist_events_and_jobs(channel, events)
@@ -517,7 +529,7 @@ WEBHOOK_BASE_URL=https://abc123.ngrok-free.app
   "timestamp": 1737500140000,
   "chat_id": 987654321,
   "user": {"user_id": 12345, "first_name": "Иван", "username": "ivan_123", "is_bot": false},
-  "payload": "utm_source=telegram&utm_campaign=summer_sale&product_sku=NIKE-AM-270-42",
+  "payload": "utm_source=max&utm_campaign=summer_sale&product_sku=NIKE-AM-270-42",
   "user_locale": "ru_RU"
 }
 ```
@@ -540,7 +552,7 @@ WEBHOOK_BASE_URL=https://abc123.ngrok-free.app
 | `keyboard` | `inline_keyboard` | Двумерный массив кнопок |
 | `callback_button` | `callback` | payload до 1024 символов |
 | `url_button` | `link` | url до 2048 символов |
-| `contact_request_button` | `request_contact` | Запрос контакта пользователя |
+| `contact_request_button` | `request_contact` | Возможность формата MAX, не функция MVP-1; не использовать для обхода обязательной формы ПДн |
 | `location_request_button` | `request_geo_location` | Запрос геолокации |
 
 ---
@@ -549,11 +561,13 @@ WEBHOOK_BASE_URL=https://abc123.ngrok-free.app
 
 ## 2. Ozon Seller API (Chat)
 
+> **Не MVP-1.** Справочная provider-specific спецификация для последующего этапа; API, тарифы, лимиты и примеры требуется заново проверить по официальной документации перед реализацией.
+
 **Источник:** [Ozon Seller API Docs](https://docs.ozon.ru/api/seller/) — раздел Chat (Premium методы)  
 **Базовый URL:** `https://api-seller.ozon.ru`  
 **Авторизация:** Headers `Client-Id` (string) + `Api-Key` (string)  
 **Тип канала:** `ozon_chat`  
-**Статус:** 🟢 Планируется к реализации  
+**Статус:** ⏭️ Будущий этап (не MVP-1)
 **Важно:** Доступно **только для продавцов с подпиской Premium Plus или Premium Pro**
 
 ---
@@ -566,7 +580,7 @@ WEBHOOK_BASE_URL=https://abc123.ngrok-free.app
 | **F3** Data Providers | Адаптер не обращается к БД напрямую. Диалоговый движок использует `ProductDataProvider` (каталог Озон), `OrderProvider` (заказы/отправления), `CustomerDataProvider` (покупатель). |
 | **F6** Function Registry | Функции: `get_order_status` (по posting_number), `get_product_info` (по SKU), `create_chat` (по posting_number), `send_message`. Условия: тариф Premium, схема FBS/FBO/rFBS. |
 | **F7** Unified Response + Channel Capabilities | Единый формат ответа ядра → конвертер в формат Озон (plain text до 1000 символов, без форматирования, без кнопок/карточек). |
-| **F14** Multi-provider LLM | Выбор модели на уровне проекта/навыка. |
+| **LLM provider** | В MVP-1 один выбранный provider за внутренним интерфейсом; этот раздел не означает выбора модели или маршрутизации на уровне проекта/навыка. |
 | **F27** Skills (goal/flow) | Сценарии: «Уточнение адреса/модели» (flow со слотами), «Статус заказа» (goal с функцией), «Ответ на частые вопросы» (goal с KB). |
 
 **Ключевое отличие от мессенджеров:** Ozon Chat — это **не полноценный мессенджер**, а сервисный канал привязанный к **отправлениям (posting)**. Бот не может писать первым произвольно — только в окне SLA (48ч для FBO, 72ч для FBS/rFBS после оплаты/доставки) или в ответ на сообщение покупателя.
@@ -601,7 +615,7 @@ WEBHOOK_BASE_URL=https://abc123.ngrok-free.app
                                               │  └───────┬────────┘  │
                                               │          │           │
                                               │  ┌───────┴────────┐  │
-                                              │  │ LLM Router     │  │
+                                              │  │ LLM Interface │  │
                                               │  │ Data Providers │  │
                                               │  │ (Ozon API)     │  │
                                               │  └────────────────┘  │
@@ -987,6 +1001,8 @@ Headers: Client-Id: 12345, Api-Key: xxx
 
 ## 3. Avito Messenger API
 
+> **Не MVP-1.** Справочная provider-specific спецификация для последующего этапа; API, тарифы, лимиты и примеры требуется заново проверить по официальной документации перед реализацией.
+
 **Источник:** [Avito Developers](https://www.avito.ru/developers/api-catalog) — раздел Messenger, OpenAPI 3.0 (swagger.json)  
 **Базовый URL:** `https://api.avito.ru`  
 **Авторизация:** OAuth 2.0 — два режима:
@@ -994,7 +1010,7 @@ Headers: Client-Id: 12345, Api-Key: xxx
 - **Authorization Code** — для доступа к данным других пользователей (через `https://avito.ru/oauth`)
 **Скопи:** `messenger:read`, `messenger:write`  
 **Тип канала:** `avito_messenger`  
-**Статус:** 🟢 Планируется к реализации  
+**Статус:** ⏭️ Будущий этап (не MVP-1)
 **Важно:** В Товарах и Работе доступен только на подписке **«Максимальный»**. В Услугах — на **«Расширенный»** и **«Максимальный»**.
 
 ---
@@ -1009,7 +1025,7 @@ Headers: Client-Id: 12345, Api-Key: xxx
 | **F5** Product Model | Авито-объявление: `id`, `title`, `price_string`, `images[]`, `url`, `status_id`, `user_id` (автор). Характеристики — в параметрах объявления. |
 | **F6** Function Registry | Функции: `search_items` (поиск объявлений), `get_item` (детали объявления), `send_message`, `send_image`, `mark_read`, `get_chats`, `get_messages`. Условия: подписка «Максимальный»/«Расширенный», scope `messenger:write`. |
 | **F7** Unified Response + Channel Capabilities | Единый формат ответа ядра → конвертер в формат Авито (text, image, item/link preview). Поддерживает: текст ≤1000 симв., изображения, ссылки на объявления, геолокацию, голосовые. |
-| **F14** Multi-provider LLM | Выбор модели на уровне проекта/навыка. |
+| **LLM provider** | В MVP-1 один выбранный provider за внутренним интерфейсом; этот раздел не означает выбора модели или маршрутизации на уровне проекта/навыка. |
 | **F27** Skills (goal/flow) | Сценарии: «Подбор товара по параметрам» (goal с `search_items`), «Ответ на вопросы по объявлению» (flow со слотами), «Показ каталога» (goal). |
 
 **Ключевая особенность:** Avito Messenger — это чат **в контексте объявления (u2i)** или профиля (u2u). Бот продавца общается с покупателем **по конкретному товару**. Контекст объявления (`item_id`, `title`, `price`, `images`) приходит в `Chat.context` — это идеально подходит под **F30 (контекст страницы/корзины)** из core-architecture.md.
@@ -1044,7 +1060,7 @@ Headers: Client-Id: 12345, Api-Key: xxx
                                               │  └───────┬────────┘  │
                                               │          │           │
                                               │  ┌───────┴────────┐  │
-                                              │  │ LLM Router     │  │
+                                              │  │ LLM Interface │  │
                                               │  │ Data Providers │  │
                                               │  │ (Avito API)    │  │
                                               │  └────────────────┘  │
@@ -1648,6 +1664,8 @@ python external/avito-api/scripts/lookup_endpoint.py search "messenger"
 
 ## 4. Bitrix24 REST API
 
+> **Не MVP-1.** Вся CRM/IM/Tasks спецификация, включая создание лидов/сделок и передачу данных, является справочным материалом для будущих этапов. В MVP-1 внутренняя заявка остаётся в PostgreSQL, создаётся только после явного подтверждения покупателя и не отправляется в CRM.
+
 **Источник:** [Официальная документация](https://apidocs.bitrix24.ru/), [GitHub репозиторий](https://github.com/bitrix-tools/b24-rest-docs) (Documentation as Code)  
 **Базовый URL:** `https://{your-domain}.bitrix24.ru/rest/` (v1/v2) или `https://{your-domain}.bitrix24.ru/rest/api/` (REST 3.0)  
 **Авторизация:** 
@@ -1655,7 +1673,7 @@ python external/avito-api/scripts/lookup_endpoint.py search "messenger"
 - **OAuth 2.0** (локальное/тиражное приложение) — токен в параметре `auth`
 **Скопи:** `crm`, `im`, `task`, `user`, `disk`, `catalog`, `sale`, `telephony`, `bizproc`, `landing`, `widget`, `messageservice`, `pay-system`, `cashbox`, `delivery`, `calendar`, `mail`, `note`, `iblock`, `department`, `event-log`, `timeman`, `telephony`, `forum`, `search`, `socialservices`, `sonet`, `tasks`, `vote`, `wiki`, `workflow`, `intranet`, `extranet`, `mobile`, `bitrix24`, `rest`  
 **Тип канала:** `bitrix24_crm`, `bitrix24_im`, `bitrix24_tasks`  
-**Статус:** 🟢 Планируется к реализации  
+**Статус:** ⏭️ Будущий этап (не MVP-1)
 **SDK:** `b24pysdk` (Python), `b24gosdk` (Go), `b24jssdk` (JS/TS) — поддерживают REST 3.0
 
 ---
@@ -1670,7 +1688,7 @@ python external/avito-api/scripts/lookup_endpoint.py search "messenger"
 | **F5** Product Model | Товар: `id`, `name`, `price`, `currency`, `measure`, `properties` (характеристики), `images`, `sections`, `variations` (SKU), `stores` (склады), `quantity`. |
 | **F6** Function Registry | Функции: `crm.item.add/update/get/list` (универсальные), `crm.lead.add`, `crm.deal.add`, `crm.contact.add`, `crm.company.add`, `crm.timeline.logmessage.add`, `crm.item.productrow.set`, `tasks.task.add`, `im.message.add`. Условия: соответствующие скоупы, права пользователя. |
 | **F7** Unified Response + Channel Capabilities | Единый формат ответа ядра → конвертер в формат Битрикс24 (JSON, поддержка HTML в полях, файлы через Disk). |
-| **F14** Multi-provider LLM | Выбор модели на уровне проекта/навыка. |
+| **LLM provider** | В MVP-1 один выбранный provider за внутренним интерфейсом; этот раздел не означает выбора модели или маршрутизации на уровне проекта/навыка. |
 | **F27** Skills (goal/flow) | Сценарии: «Создание сделки из чата» (flow), «Квалификация лида» (goal), «Автоматическое заполнение карточки» (flow с роботами). |
 | **F30** Контекст страницы | При открытии карточки сделки/лида — контекст передаётся в навык (entityTypeId, entityId, stageId, поля). |
 
@@ -1713,7 +1731,7 @@ python external/avito-api/scripts/lookup_endpoint.py search "messenger"
                                                   │  └───────┬────────┘  │
                                                   │          │           │
                                                   │  ┌───────┴────────┐  │
-                                                  │  │ LLM Router     │  │
+                                                  │  │ LLM Interface │  │
                                                   │  │ Data Providers │  │
                                                   │  │ (Bitrix API)   │  │
                                                   │  └────────────────┘  │
@@ -2343,11 +2361,13 @@ curl -X POST "https://domain.bitrix24.ru/rest/api/1/abc123/tasks.task.chat.messa
 
 ---
 
-# 5. Generic Channel Integration Framework (F31) — ТЗ / Манифест
+# 5. Generic Channel Integration Framework (F31) — справочный шаблон расширения
 
-> **Цель:** Универсальный фреймворк для подключения внешних каналов (мессенджеры, маркетплейсы, CRM, ERP, телефония) к ядру ИИ-продавца с повторным использованием общих контрактов, надёжности и инструментов тестирования.
+> **Граница MVP-1:** это материал о расширяемости, а не самостоятельное ТЗ и не требование реализовать универсальную интеграционную платформу. В MVP-1 реализуется только необходимый MAX-адаптер и общий внутренний контракт, требуемый ТЗ. Ozon, Avito, CRM/ERP, телефония и примеры других каналов — последующие этапы.
 >
-> **Основа:** Анализ 4 интеграций (MAX, Ozon Chat, Avito Messenger, Bitrix24) — выделены общие паттерны, различия и точки расширения.
+> F31 задаёт принцип расширения, а не публичный универсальный REST API и не утверждает подключение каждого перечисленного provider.
+>
+> Provider-specific сведения в примерах требуют проверки по актуальным официальным источникам.
 
 ---
 
@@ -2362,15 +2382,17 @@ curl -X POST "https://domain.bitrix24.ru/rest/api/1/abc123/tasks.task.chat.messa
 | **Session Strategy** | `SessionResolver` на канал — как из входящего сделать `session_id` + `customer_id`. |
 | **Context Extraction** | `ContextExtractor` — извлечение контекста товара/заказа/страницы (F30) из входящего события. |
 | **Durable Webhook Ingestion** | Webhook: верификация → нормализация → атомарная запись Inbox + durable job → ACK по контракту provider. Обработка выполняется worker, не in-memory background task. |
-| **Rate Limiting** | `RateLimiter` (token bucket / sliding window) на `channel_type` с конфигом. |
+| **Rate Limiting** | Provider-aware limiter с конфигом; Redis может быть ускорением, но не обязательным компонентом MVP-1 и не источником истины для durable jobs/Inbox/Outbox. |
 | **Media Pipeline** | `MediaUploader` — стратегия загрузки на канал (multipart, 2-step, 3-step, предзагрузка). |
-| **Idempotency** | Уникальный provider event ID в долговременном Inbox предотвращает повторный запуск; idempotency key Outbox отдельно защищает исходящие операции. Redis TTL не является единственной защитой. |
+| **Idempotency** | В MVP-1 долговременная дедупликация Inbox и состояние Outbox опираются на PostgreSQL. Redis TTL может быть только дополнительным ускорением и не является обязательным или единственным механизмом защиты. |
 | **Health Classification** | `healthy/degraded/failed/requires_setup/disabled` с доменом причины (`credentials`, `permissions`, `subscription`, `provider_outage`, `rate_limit`, `configuration`, `unknown`). |
 | **Observability** | Структурированное логирование, метрики, трейсинг на уровне фреймворка. |
 
 ---
 
 ## 5.2. Компоненты фреймворка
+
+Ниже — иллюстративная структура модульного монолита, а не требование создавать микросервисы. В MVP-1 реализуется только нужный MAX-адаптер и части общих контрактов, указанные в BACKEND_MVP_TZ.md. Путь webhook — внешний ingress провайдера; это не публичный клиентский/покупательский API.
 
 ```
 ai_seller_core/
@@ -2665,7 +2687,7 @@ class ChannelResponseConstraints(BaseModel):
     seconds_remaining: Optional[int] = None
 ```
 
-`ChannelResponseConstraints` передаётся LLM Router **до генерации** в системном контексте и, если поддерживается провайдером модели, в schema/structured output. Модель инструктируется не генерировать недоступные элементы и укладываться в лимит длины. Это оптимизация качества и расходов, но не security boundary: после ответа модели Response Validator обязательно проверяет ограничения. При превышении runtime запрашивает сокращённую текстовую версию или формирует безопасный кодовый fallback; недопустимое содержимое не должно молча исчезать при конвертации.
+`ChannelResponseConstraints` передаётся LLM-интерфейсу **до генерации** в системном контексте и, если поддерживается выбранным provider, в schema/structured output. В MVP-1 этот интерфейс обращается только к одному выбранному provider и не выполняет маршрутизацию или переключение на другой provider; ограниченная коррекция ответа, если она нужна, использует тот же provider. Модель инструктируется не генерировать недоступные элементы и укладываться в лимит длины. Это оптимизация качества и расходов, но не security boundary: после ответа модели Response Validator обязательно проверяет ограничения. При нарушении runtime может ограниченно запросить коррекцию у того же provider или сформировать безопасный ответ кодом; недопустимое содержимое не должно молча исчезать при конвертации.
 
 ### 5.3.4. Состояние подключения канала
 
@@ -2975,7 +2997,7 @@ class Bitrix24MediaUploader(MediaUploader):
 
 ## 5.9. Capability-Based Response Formatting
 
-До вызова модели runtime формирует `ChannelResponseConstraints` для текущего канала и сессии. Например, для Ozon Chat модель получает режим только plain text, лимит длины ответа и оставшееся SLA-окно; для канала с карточками/кнопками эти формы разрешаются только при фактически включённых capabilities. Ограничения передаются в system context/structured-output schema. После генерации Response Validator повторно проверяет длину, типы элементов и дедлайн. Если ответ нарушает требования, runtime делает ограниченный запрос на текстовую коррекцию либо формирует безопасный fallback; произвольное усечение, способное удалить цену/условия или изменить смысл, запрещено.
+До вызова модели runtime формирует `ChannelResponseConstraints` для текущего канала и сессии. Например, для Ozon Chat модель получает режим только plain text, лимит длины ответа и оставшееся SLA-окно; для канала с карточками/кнопками эти формы разрешаются только при фактически включённых capabilities. Ограничения передаются в system context/structured-output schema. После генерации Response Validator повторно проверяет длину, типы элементов и дедлайн. Если ответ нарушает требования, runtime может сделать ограниченный запрос на текстовую коррекцию у того же единственного provider либо сформировать безопасный кодовый ответ; это не provider fallback. Произвольное усечение, способное удалить цену/условия или изменить смысл, запрещено.
 
 ```python
 # adapters/converter.py
@@ -3079,7 +3101,8 @@ RATE_LIMIT_CONFIG = {
     "amocrm": {"rps": 7, "burst": 15, "strategy": "token_bucket"},
 }
 
-class TokenBucketRateLimiter(RateLimiter):
+class RedisTokenBucketRateLimiter(RateLimiter):
+    """Опциональная реализация; основная работа MVP не зависит от Redis."""
     def __init__(self, redis_client):
         self.redis = redis_client
     
@@ -3237,25 +3260,25 @@ class ChannelTestHarness:
 
 ---
 
-## 5.14. Миграция существующих адаптеров
+## 5.14. Этапность адаптеров (справочно; не план MVP-1)
 
 | Адаптер | Статус | Что нужно сделать |
 |---------|--------|-------------------|
-| **MAX** | ✅ Документирован | Реализовать `ChannelAdapter`, вынести конвертер в `CapabilityConverter` |
-| **Ozon Chat** | ✅ Документирован | Реализовать `SessionResolver` с SLA, `StaticTokenCredentialProvider` |
-| **Avito Messenger** | ✅ Документирован | Реализовать `OAuth2ClientCredentialsProvider`, `AvitoMediaUploader`, `ContextExtractor` |
-| **Bitrix24** | ✅ Документирован | Разбить на 3 адаптера (CRM, IM, Tasks), универсальные методы CRM |
+| **MAX** | MVP-1 | Реализовать MAX-адаптер и требуемые общие контракты согласно ТЗ |
+| **Ozon Chat** | Будущий этап | После MVP-1 отдельно проверить официальный API и требования |
+| **Avito Messenger** | Будущий этап | После MVP-1 отдельно проверить официальный API и требования |
+| **Bitrix24** | Будущий этап | CRM/IM/Tasks не входят в MVP-1 |
 
 ---
 
-## 5.15. План реализации (Roadmap)
+## 5.15. Возможная последовательность дальнейшего развития (не план/оценка MVP-1)
 
 | Этап | Задачи | Оценка |
 |------|--------|--------|
 | **1. Core Contracts** | `unified.py`, `ChannelCapabilities`, `ChannelAdapter` Protocol | 2 дня |
 | **2. Infrastructure** | `AdapterRegistry`, `GenericWebhookEndpoint`, `CredentialProvider`, `TokenManager` | 3 дня |
 | **3. Session & Context** | `SessionResolver` базовые стратегии, `ContextExtractor` | 2 дня |
-| **4. Media & Rate Limit** | `MediaUploader` стратегии, `RateLimiter` (Redis), `IdempotencyManager` | 3 дня |
+| **4. Media & Rate Limit** | `MediaUploader` стратегии, `RateLimiter` (Redis опционален), `IdempotencyManager` | 3 дня |
 | **5. Converter** | `CapabilityConverter` с graceful degradation | 2 дня |
 | **6. Testing Harness** | `ChannelTestHarness`, фикстуры для 4 каналов | 3 дня |
 | **7. Migration** | Рефакторинг MAX, Ozon, Avito, Bitrix24 под новый фреймворк | 5 дней |
@@ -3264,11 +3287,11 @@ class ChannelTestHarness:
 
 ---
 
-## 5.16. Чек-лист готовности фреймворка
+## 5.16. Чек-лист расширения (не критерии готовности MVP-1)
 
 - [ ] `ChannelAdapter` Protocol покрывает операции подключаемого канала
 - [ ] `UnifiedEvent` представляет message, callback и немесседжные события без фиктивного пустого текста
-- [ ] `GenericWebhookEndpoint` обрабатывает вебхуки всех 4 каналов
+- [ ] `GenericWebhookEndpoint` обрабатывает вебхуки MAX; дополнительные адаптеры — только на будущих этапах
 - [ ] Event Router не запускает Dialog Runtime для CRM/lifecycle/status events без соответствующего сценария
 - [ ] Inbox обеспечивает долговременную дедупликацию, Outbox — повторную отправку с проверкой срока актуальности
 - [ ] `CapabilityConverter` корректно деградирует: карточки→текст, кнопки→текст, медиа→skip
@@ -3276,14 +3299,14 @@ class ChannelTestHarness:
 - [ ] `SessionResolver` правильно резолвит session_id для всех типов чатов
 - [ ] `ContextExtractor` извлекает item_context у Avito и Bitrix24
 - [ ] `TokenManager` обновляет OAuth токены при 401
-- [ ] `RateLimiter` работает через Redis, конфиг на канал
+- [ ] Rate limiting не зависит от доступности Redis; Redis опционален, PostgreSQL polling durable jobs продолжается без него
 - [ ] Каналы различают `healthy/degraded/failed/requires_setup/disabled` и домен причины
-- [ ] `ChannelTestHarness` запускается для всех 4 адаптеров зелёным
+- [ ] `ChannelTestHarness` запускается для MAX; другие адаптеры тестируются при подключении на будущих этапах
 - [ ] Документация для команды: как добавить адаптер с учётом особенностей его API
 
 ---
 
-## 5.17. Пример добавления 5-го канала (Telegram)
+## 5.17. Будущий пример добавления канала (Telegram; не MVP-1)
 
 ```bash
 # 1. Создать структуру
