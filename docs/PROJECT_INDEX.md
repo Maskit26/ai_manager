@@ -1,6 +1,6 @@
 # AI Manager — Project Index
 
-> Auto-generated index for AI-assisted navigation. Updated: 2026-11-09
+> Auto-generated index for AI-assisted navigation. Updated: 2026-11-09 (session lifecycle rules added)
 
 ---
 
@@ -98,7 +98,7 @@ ai_manager/
 | `InboxEvent` | Immutable incoming MAX events (idempotency via `event_id`) |
 | `OutboxCommand` | Commands to send to MAX (status, retries, `delivery_unknown` on timeout) |
 | `Job` | Durable background jobs (payload, lease, fence, retry, dead-letter) |
-| `DialogSession` | Buyer session: lease, fence, status, escalation, operator assignment |
+| `DialogSession` | Buyer session: lease, fence, state (`active`/`closed`), `release_id`, `last_activity_at`, `closed_at`, `close_reason` (`max_chat_closed`/`idle_ttl`/`manual`), `closed_by`, `reopen_count`, escalation, operator assignment |
 | `CatalogProduct` | Product master data (authoritative source) |
 | `KnowledgeChunk` | RAG chunks with `embedding` (pgvector) + `qdrant_point_id` (derived) |
 | `PiiRecord` | PII from mandatory form (never sent to LLM) |
@@ -113,6 +113,7 @@ ai_manager/
 | Pattern | Implementation |
 |---------|----------------|
 | **Lease + Fence** | `SessionLeaseManager.acquire_lease()` → atomic `UPDATE ... SET lease_fence = lease_fence + 1` |
+| **Session Lifecycle** | `open_or_resume_session` / `close_session` / `commit_turn` — only Dialog Worker; `commit_turn` = single fenced transaction for turn results |
 | **Idempotent Inbox** | `InboxProcessor` checks `InboxEvent.event_id` unique constraint before processing |
 | **Outbox Pre-flight** | `OutboxDispatcher` re-checks session status, escalation, operator pause, deadline before send |
 | **Retry Policy** | Exponential backoff + jitter (`retry.py`), max attempts configurable |
@@ -154,8 +155,8 @@ Current: 5 tests passing, Ruff clean, offline migration generated.
 
 ## 📋 Next Implementation Steps (per BACKEND_MVP_TZ.md Part 2+)
 
-1. **Part 2**: DB schema & migrations (models → Alembic)
-2. **Part 3**: Inbox Event Router + Dialog Runtime + Session Lease
+1. **Part 2**: DB schema & migrations (models → Alembic) — add `chat_sessions` fields: `state`, `last_activity_at`, `closed_at`, `close_reason`, `closed_by`, `reopen_count`
+2. **Part 3**: Inbox Event Router + Dialog Runtime + Session Lease — implement `open_or_resume_session`, `close_session`, `commit_turn` in worker
 3. **Part 4**: API Contract (OpenAPI) — *agree before coding*
 4. **Part 5**: Outbox Dispatcher + MAX Delivery Adapter
 5. **Part 6**: Catalog Import (CSV/XLSX) + Qdrant Sync
@@ -173,6 +174,6 @@ Current: 5 tests passing, Ruff clean, offline migration generated.
 - **Visual reference**: `docs/SERVICE_BLOCK_DIAGRAM.md` — Mermaid diagrams
 - **Integration details**: `docs/EXTERNAL_INTEGRATIONS.md` — MAX spec + future
 - **Code entry**: `src/ai_seller_core/main.py` → routers → domain modules
-- **Database**: `src/ai_seller_core/persistence/models.py` + migration SQL
-- **Background jobs**: `src/ai_seller_core/jobs/worker.py` (base) → `inbox.py`/`outbox.py` (concrete)
-- **Session safety**: `src/ai_seller_core/persistence/session_lease.py` (fence token pattern)
+- **Database**: `src/ai_seller_core/persistence/models.py` + migration SQL — `DialogSession` needs lifecycle fields
+- **Background jobs**: `src/ai_seller_core/jobs/worker.py` (base) → `inbox.py`/`outbox.py` (concrete) — worker owns session lifecycle
+- **Session safety**: `src/ai_seller_core/persistence/session_lease.py` (fence token pattern) — used by `commit_turn`

@@ -156,7 +156,10 @@ flowchart TD
     NoLLM --> Outbox
     SanitizeCheck -->|"Да"| Runtime["Dialog Runtime загружает историю,<br/>состояние и закреплённый release"]
 
-    Runtime --> Policy{"Агент активен;<br/>лимиты позволяют ответ;<br/>нет эскалации или operator pause?"}
+        Runtime --> SessionCheck{"Сессия active?"}
+        SessionCheck -->|"Нет (closed)"| Resume["Worker возобновляет ту же сессию:<br/>история, release_id, reopen_count++"]
+        Resume --> Runtime
+        SessionCheck -->|"Да"| Policy{"Агент активен;<br/>лимиты позволяют ответ;<br/>нет эскалации или operator pause?"}
     Policy -->|"Нет"| Stop["Сохранить состояние / эскалацию;<br/>LLM не вызывать"]
     Stop --> PersistStop["PostgreSQL: зафиксировать событие"]
     Policy -->|"Да"| Context["Сформировать очищенный контекст<br/>и передать MAX capabilities"]
@@ -174,8 +177,9 @@ flowchart TD
     LLM --> Compose
 
     Compose --> Validate["Проверить коммерческие данные,<br/>формат MAX и актуальность ответа"]
-    Validate --> PersistResponse["Короткая транзакция: история, состояние,<br/>событие и Outbox с проверкой fencing token"]
-    PersistResponse --> Outbox["worker-delivery забирает Outbox job"]
+
+        Validate --> CommitTurn["commit_turn: короткая транзакция под блокировкой сессии;<br/>проверка fence + история + состояние + Outbox"]
+        CommitTurn --> Outbox["worker-delivery забирает Outbox job"]
     Outbox --> Preflight["Непосредственно перед отправкой проверить:<br/>актуальность диалога, эскалацию,<br/>operator pause и deadline"]
     Preflight --> CanSend{"Отправка разрешена?"}
     CanSend -->|"Нет"| Hold["Удержать, отменить или пометить expired;<br/>сохранить причину"]
@@ -202,6 +206,10 @@ flowchart TD
 8. Состояние `degraded` обозначает временный сбой провайдера и не требует от клиента менять credentials. `requires_setup` используется для подтверждённой проблемы настройки, прав или подписки.
 9. MVP-1 включает только канал MAX. Ozon, Avito, CRM и Wildberries не участвуют в этом потоке; новые подключения добавляются отдельными этапами через адаптеры.
 10. Payload Inbox и технические данные webhook не являются обычной историей диалога: ПДн в них минимизируются, шифруются или удаляются по установленной политике хранения.
+11. Жизненный цикл сессии (открытие, возобновление, закрытие) управляет только Dialog Worker. API/webhook ограничен Inbox и durable job; Dialog Runtime — stateless и не меняет сессию.
+12. Сессия закрывается по событию MAX `conversation_lifecycle`, по idle TTL проекта или по ручной команде уполномоченного пользователя. Закрытие фиксирует `closed_at`, `close_reason` (`max_chat_closed`, `idle_ttl`, `manual`) и `closed_by`.
+13. Новое сообщение для `closed` сессии возобновляет ту же запись: сохраняется `chat_sessions.id`, история и закреплённый `release_id`, state → `active`, увеличивается `reopen_count`, аудит закрытия/возобновления сохраняется. Новый session row не создаётся.
+14. Все изменения диалогового хода фиксируются только через `commit_turn` в одной короткой транзакции с проверкой fencing token под блокировкой строки сессии. Lifecycle-переходы выполняются через `open_or_resume_session` и `close_session` в отдельных транзакциях. Запись `chat_messages` и создание `outbox` вне `commit_turn` запрещены.
 
 ## 3. Поток загрузки каталога
 
@@ -322,7 +330,7 @@ flowchart TD
 | Профиль запуска | Основная работа |
 |---|---|
 | `api` | API фронта, webhook ingress MAX, управление и чтение истории |
-| `worker-dialog` | `inbound_dialog`: входящие MAX events, сессии, Dialog Runtime, LLM и tools |
+| `worker-dialog` | `inbound_dialog`: входящие MAX events, **жизненный цикл сессии** (open_or_resume_session / close_session / commit_turn), Dialog Runtime, LLM и tools |
 | `worker-delivery` | `outbound_delivery`: ответы MAX через Outbox |
 | `worker-catalog` | `catalog_import`: импорт CSV/XLSX и отчёты |
 | `worker-indexing` | `indexing`: embeddings и индексация/удаление Qdrant vectors |
