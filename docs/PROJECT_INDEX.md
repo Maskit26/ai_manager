@@ -18,7 +18,8 @@ ai_manager/
 │   ├── env.py
 │   ├── script.py.mako
 │   └── versions/
-│       └── 0001_initial_durable_processing.py
+│       ├── 0001_initial_durable_processing.py
+│       └── 7612d753d48f_add_session_lifecycle_fields_and_chat_.py
 ├── src/ai_seller_core/            # Backend scaffold (FastAPI, Python 3.12, SQLAlchemy 2.0, uv)
 │   ├── __init__.py
 │   ├── main.py                    # FastAPI app factory, lifespan, routers
@@ -30,20 +31,22 @@ ai_manager/
 │   │   └── config.py              # Pydantic Settings from .env (DB, Redis, MAX, LLM, worker, PII)
 │   ├── dialog/
 │   │   ├── __init__.py
-│   │   └── runtime.py             # DialogRuntime protocol, SessionContext, ToolResult, InboxEvent, OutboxCommand
+│   │   ├── runtime.py             # Stateless DialogRuntime contract and LLM/tool loop
+│   │   └── session_service.py     # Session open/resume/close and fenced turn commit
 │   ├── jobs/
 │   │   ├── __init__.py
 │   │   ├── repository.py          # JobRepository: enqueue, claim_lease, complete, fail, dead_letter, requeue_stalled
 │   │   ├── worker.py              # Generic WorkerBase: lease, fence, retry/backoff, dead-letter, shutdown
 │   │   ├── inbox.py               # InboxProcessor: idempotent MAX events → DialogRuntime
+│   │   ├── inbox_handler.py       # Partially wired dialog handler; requires app adapters/resolvers
 │   │   ├── outbox.py              # OutboxDispatcher: pre-flight checks, delivery_unknown on timeout
 │   │   ├── delivery.py            # MaxDeliveryAdapter: send_message, mark_read, typing, webhook verification
 │   │   └── retry.py               # Exponential backoff + jitter policy
 │   └── persistence/
 │       ├── __init__.py
 │       ├── base.py                # DeclarativeBase, UUID pk, timestamps, async engine/session
-│       ├── models.py              # SQLAlchemy models: InboxEvent, OutboxCommand, Job, DialogSession, CatalogProduct, KnowledgeChunk, PiiRecord, Escalation, Operator, OperatorAssignment, AuditLog
-│       └── session_lease.py       # SessionLeaseManager: atomic lease acquire/renew/release, fence token
+│       ├── models.py              # SQLAlchemy models: InboxEvent, OutboxMessage, BackgroundJob, DialogSession, ChatMessage
+│       └── session_lease.py       # Atomic session lease acquire/renew/release and fence checks
 ├── tests/
 │   ├── test_health.py             # Health endpoint tests
 │   ├── test_dialog_runtime.py     # DialogRuntime contract tests (mock)
@@ -68,8 +71,10 @@ ai_manager/
 | **App entrypoint** | `src/ai_seller_core/main.py` |
 | **Configuration** | `src/ai_seller_core/core/config.py` |
 | **Dialog runtime contract** | `src/ai_seller_core/dialog/runtime.py` |
+| **Session lifecycle / commit** | `src/ai_seller_core/dialog/session_service.py` |
 | **Background job framework** | `src/ai_seller_core/jobs/worker.py`, `repository.py`, `retry.py` |
 | **Inbox (MAX events)** | `src/ai_seller_core/jobs/inbox.py` |
+| **Inbound dialog handler** | `src/ai_seller_core/jobs/inbox_handler.py` |
 | **Outbox (commands → MAX)** | `src/ai_seller_core/jobs/outbox.py`, `delivery.py` |
 | **Session lease/fencing** | `src/ai_seller_core/persistence/session_lease.py` |
 | **Database models** | `src/ai_seller_core/persistence/models.py` |

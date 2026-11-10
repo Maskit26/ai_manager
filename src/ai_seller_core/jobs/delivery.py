@@ -3,9 +3,10 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_seller_core.persistence.base import SessionFactory
-from ai_seller_core.persistence.models import OutboxMessage
+from ai_seller_core.persistence.models import DialogSession, OutboxMessage
 
 
 class ChannelSender(Protocol):
@@ -19,7 +20,13 @@ class ChannelSender(Protocol):
 
 
 class DeliveryPolicy(Protocol):
-    async def may_send(self, *, message: OutboxMessage) -> bool: ...
+    async def may_send(
+        self,
+        *,
+        session: AsyncSession,
+        message: OutboxMessage,
+        dialog: DialogSession,
+    ) -> bool: ...
 
 
 @dataclass(frozen=True)
@@ -51,7 +58,20 @@ class OutboxDelivery:
             if message.deadline_at is not None and message.deadline_at <= datetime.now(UTC):
                 message.status = "expired"
                 return
-            if not await self.policy.may_send(message=message):
+            dialog = await session.scalar(
+                select(DialogSession)
+                .where(DialogSession.id == message.session_id)
+                .with_for_update()
+            )
+            if dialog is None or dialog.state != "active":
+                message.status = "held"
+                message.last_error = "Dialog session is missing or not active"
+                return
+            if not await self.policy.may_send(
+                session=session,
+                message=message,
+                dialog=dialog,
+            ):
                 message.status = "held"
                 message.last_error = "Delivery policy blocked the message"
                 return

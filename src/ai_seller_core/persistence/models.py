@@ -91,8 +91,61 @@ class DialogSession(Base):
 
     id: Mapped[str] = mapped_column(String(100), primary_key=True)
     project_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    channel_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    customer_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    external_chat_id: Mapped[str] = mapped_column(String(200), nullable=False)
     release_id: Mapped[str] = mapped_column(String(100), nullable=False)
-    state: Mapped[str] = mapped_column(String(32), nullable=False, default="bot")
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    variables: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    last_activity_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    close_reason: Mapped[str | None] = mapped_column(String(64))
+    closed_by: Mapped[str | None] = mapped_column(String(100))
+    reopen_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     lease_owner: Mapped[str | None] = mapped_column(String(100))
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     lease_fence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_dialog_sessions_active_lookup",
+            "project_id",
+            "channel_id",
+            "external_chat_id",
+            unique=True,
+        ),
+        Index(
+            "ix_dialog_sessions_closed_resume",
+            "project_id",
+            "channel_id",
+            "customer_id",
+            "state",
+        ),
+    )
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    session_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    content: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    external_message_id: Mapped[str | None] = mapped_column(String(200))
+    delivery_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_chat_messages_session_created", "session_id", "created_at"),
+        UniqueConstraint("session_id", "external_message_id", name="uq_chat_messages_external"),
+    )

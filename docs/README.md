@@ -82,8 +82,9 @@ src/ai_seller_core/
 ├── jobs/                                Durable jobs, Inbox и Outbox delivery
 │   ├── __init__.py                      [есть]
 │   ├── inbox.py                          [частично] Дедупликация и постановка job
+│   ├── inbox_handler.py                  [частично] Обработчик сессии с injected runtime/resolvers
 │   ├── outbox.py                         [частично] Атомарная запись сообщения и job
-│   ├── delivery.py                       [частично] Контур доставки и policy gate
+│   ├── delivery.py                       [частично] Контур доставки; policy implementation required
 │   ├── repository.py                     [частично] Enqueue и атомарный claim job
 │   ├── retry.py                          [есть] Exponential backoff с jitter
 │   ├── worker.py                         [частично] Polling, lease, heartbeat, retry
@@ -95,7 +96,7 @@ src/ai_seller_core/
 │   ├── __init__.py                      [есть]
 │   ├── runtime.py                        [частично] LLM/tool loop и sanitizer contract
 │   ├── orchestration.py                  [план] Полный сценарий обработки сообщения
-│   ├── session_service.py                [план] Сессия, релиз и последовательность событий
+│   ├── session_service.py                [частично] Lease, lifecycle и fenced commit turn
 │   ├── context_builder.py                [план] Очищенный ограниченный контекст модели
 │   ├── response.py                       [план] CanonicalResponse и проверка capabilities
 │   ├── policy.py                         [план] Лимиты, pause, статус агента и SLA
@@ -177,7 +178,8 @@ migrations/
 ├── env.py                                [есть] Alembic async environment
 ├── script.py.mako                        [есть] Шаблон миграций
 └── versions/
-    └── 0001_initial_durable_processing.py [частично] Начальные таблицы jobs/Inbox/Outbox/session
+    ├── 0001_initial_durable_processing.py [есть] Базовые таблицы jobs/Inbox/Outbox/session
+    └── 7612d753d48f_add_session_lifecycle_fields_and_chat_.py [есть] Поля lifecycle и история сообщений
 
 tests/
 ├── test_health.py                        [есть] Health endpoint

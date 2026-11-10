@@ -99,3 +99,28 @@ def test_runtime_blocks_unsanitizable_message() -> None:
     else:
         raise AssertionError("Expected unsanitizable input to be rejected")
     assert provider.calls == 0
+
+
+def test_runtime_includes_persisted_history_before_inbound_text() -> None:
+    class HistoryProvider:
+        async def generate(self, *, messages, tools) -> ModelTurn:
+            assert messages == [
+                {"role": "assistant", "content": "Earlier answer"},
+                {"role": "user", "content": "Current question"},
+            ]
+            return ModelTurn(text="Next answer")
+
+    runtime = DialogRuntime(
+        provider=HistoryProvider(),
+        tools=Tools(),
+        sanitizer=Sanitizer(),
+    )
+    message = InboundMessage(
+        project_id="project-1",
+        session_id="session-1",
+        text="Current question",
+        correlation_id="correlation-1",
+        history=({"role": "assistant", "content": "Earlier answer"},),
+    )
+
+    assert asyncio.run(runtime.respond(message)) == "Next answer"

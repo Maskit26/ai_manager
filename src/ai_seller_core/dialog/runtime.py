@@ -8,6 +8,7 @@ class InboundMessage:
     session_id: str
     text: str
     correlation_id: str
+    history: tuple[dict[str, object], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -63,7 +64,10 @@ class DialogRuntime:
         if cleaned_text is None:
             raise ValueError("Message could not be sanitized; do not send it to the LLM")
 
-        model_messages: list[dict[str, object]] = [{"role": "user", "content": cleaned_text}]
+        model_messages: list[dict[str, object]] = [
+            *message.history,
+            {"role": "user", "content": cleaned_text},
+        ]
         available_tools = self.tools.available_tools(project_id=message.project_id)
         for round_number in range(self.max_tool_rounds + 1):
             turn = await self.provider.generate(
