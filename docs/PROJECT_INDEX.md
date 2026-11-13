@@ -78,7 +78,8 @@ ai_manager/
 | **Outbox (commands → MAX)** | `src/ai_seller_core/jobs/outbox.py`, `delivery.py` |
 | **Session lease/fencing** | `src/ai_seller_core/persistence/session_lease.py` |
 | **Database models** | `src/ai_seller_core/persistence/models.py` |
-| **Migrations** | `migrations/versions/0001_initial_durable_processing.py` |
+| **Migrations** | `migrations/versions/0001_initial_durable_processing.py`, `migrations/versions/0002_billing_schema.py` |
+| **Billing / Dancoin / Entitlements** | `src/ai_seller_core/billing/` (planned) |
 
 ---
 
@@ -110,6 +111,7 @@ ai_manager/
 | `Escalation` | Human handoff requests |
 | `Operator` / `OperatorAssignment` | Role-based access (owner/admin/operator matrix) |
 | `AuditLog` | Immutable audit trail |
+| **Billing models** | `TariffPlan`, `LLMModel`, `Subscription`, `DancoinBalance`, `DancoinTransaction`, `Invoice`, `Payment`, `UsageRecord`, `AgentSlot` |
 
 ---
 
@@ -123,6 +125,7 @@ ai_manager/
 | **Outbox Pre-flight** | `OutboxDispatcher` re-checks session status, escalation, operator pause, deadline before send |
 | **Retry Policy** | Exponential backoff + jitter (`retry.py`), max attempts configurable |
 | **Dead Letter** | After max retries → `dead_letter` status, alerting hook |
+| **Billing Scheduler** | Monthly Dancoin grant, daily extra-agent spend, invoice generation, grace period, entitlements recalc |
 
 ---
 
@@ -133,6 +136,7 @@ ai_manager/
 | MAX Messenger Webhook | `jobs/inbox.py`, `jobs/delivery.py` | Scaffolded |
 | MAX REST API (send/mark_read/typing) | `jobs/delivery.py` | Scaffolded |
 | LLM Provider (OpenAI-compatible) | `dialog/runtime.py` (protocol) | Interface only |
+| **ЮKassa (Payment Provider)** | `billing/payment_provider.py` (planned) | Interface only |
 | Beget AI Gateway | `EXTERNAL_INTEGRATIONS.md` | Candidate for evaluation |
 | Future: Telegram, WhatsApp, Avito, CRM | `EXTERNAL_INTEGRATIONS.md` | Post-MVP-1 |
 
@@ -154,7 +158,7 @@ uv run mypy src/
 uv run alembic upgrade head --sql
 ```
 
-Current: 5 tests passing, Ruff clean, offline migration generated.
+Current: 6 tests passing, Ruff clean, offline migration generated (2 migrations: durable processing + billing schema).
 
 ---
 

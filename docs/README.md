@@ -179,7 +179,8 @@ migrations/
 ├── script.py.mako                        [есть] Шаблон миграций
 └── versions/
     ├── 0001_initial_durable_processing.py [есть] Базовые таблицы jobs/Inbox/Outbox/session
-    └── 7612d753d48f_add_session_lifecycle_fields_and_chat_.py [есть] Поля lifecycle и история сообщений
+    ├── 7612d753d48f_add_session_lifecycle_fields_and_chat_.py [есть] Поля lifecycle и история сообщений
+    └── 0002_billing_schema.py [план] Тарифы, модели LLM, подписки, Dancoin, инвойсы, платежи, usage, agent_slots
 
 tests/
 ├── test_health.py                        [есть] Health endpoint
@@ -213,7 +214,7 @@ docs/
 | `worker-delivery` | `outbound_delivery`, повторяемая отправка MAX |
 | `worker-catalog` | Импорт и проверка полноты каталога |
 | `worker-indexing` | Embeddings, индексация и удаление векторов |
-| `scheduler` | SLA, повторные задачи, восстановление lease и health checks |
+| `scheduler` | SLA, повторные задачи, восстановление lease, health checks, **billing jobs (гранты, списания, инвойсы, grace period)** |
 
 PostgreSQL является источником истины для бизнес-данных, Inbox, Outbox и фоновых задач. Redis в MVP-1 не обязателен и может использоваться только как ускоритель пробуждения/координации; потеря Redis не должна терять задания. Qdrant содержит восстанавливаемые поисковые индексы, а не авторитетные цены и остатки.
 
