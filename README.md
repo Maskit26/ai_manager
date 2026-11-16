@@ -38,8 +38,11 @@ uv run uvicorn ai_seller_core.main:app --reload
 uv run pytest
 ```
 
-API: `http://127.0.0.1:8000/health`  
+Liveness: `http://127.0.0.1:8000/health`
+Readiness (PostgreSQL and Qdrant): `http://127.0.0.1:8000/ready`
 OpenAPI UI: `http://127.0.0.1:8000/docs`
+
+`/health` reports that the API process is responsive. `/ready` checks PostgreSQL and Qdrant and returns HTTP 503 unless both are available; an unset Qdrant URL is reported as `not_configured`. The API creates and closes its database engine and Qdrant HTTP client within its lifespan.
 
 API и worker запускаются отдельными процессами и терминалами. Для запуска worker выполните:
 

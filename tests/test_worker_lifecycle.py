@@ -1,9 +1,11 @@
 import asyncio
 import signal
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from ai_seller_core import main as app_module
 from ai_seller_core.core.config import Settings
 from ai_seller_core.jobs.cli import _shutdown_signals
 from ai_seller_core.jobs.worker import Worker
@@ -70,6 +72,30 @@ def test_database_lifespan_disposes_engine_after_error(monkeypatch) -> None:
     with pytest.raises(RuntimeError, match="test failure"):
         asyncio.run(fail_inside_lifecycle())
     engine.dispose.assert_awaited_once()
+
+
+def test_api_lifespan_closes_qdrant_http_client(monkeypatch) -> None:
+    settings = Settings(
+        _env_file=None,
+        database_url=DATABASE_URL,
+        qdrant_url="http://127.0.0.1:6333",
+    )
+
+    @asynccontextmanager
+    async def database_lifespan(_settings):
+        yield
+
+    monkeypatch.setattr(app_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(app_module, "database_lifespan", database_lifespan)
+    app = app_module.create_app()
+
+    async def exercise_lifespan() -> None:
+        async with app.router.lifespan_context(app):
+            client = app.state.qdrant_client
+            assert not client.is_closed
+        assert client.is_closed
+
+    asyncio.run(exercise_lifespan())
 
 
 def test_shutdown_signal_sets_stop_event() -> None:

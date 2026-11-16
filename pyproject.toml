@@ -12,6 +12,7 @@ dependencies = [
     "alembic>=1.15,<2",
     "asyncpg>=0.30,<1",
     "fastapi>=0.115,<1",
+    "httpx>=0.27,<1",
     "pydantic-settings>=2.6,<3",
     "sqlalchemy[asyncio]>=2.0.38,<3",
     "uvicorn[standard]>=0.34,<1",
@@ -22,7 +23,6 @@ ai-seller-worker = "ai_seller_core.jobs.cli:main"
 
 [project.optional-dependencies]
 dev = [
-    "httpx>=0.27,<1",
     "pytest>=8.3,<9",
     "pytest-cov>=6,<7",
     "ruff>=0.11,<1",
