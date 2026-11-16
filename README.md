@@ -32,6 +32,8 @@ uv run uvicorn ai_seller_core.main:app --reload
 
 В development-профиле адрес Qdrant можно оставить локальным или не задавать. Credentials внешних AI/API-интеграций для запуска приложения не требуются. В production настройте значения через окружение процесса или защищённое хранилище секретов, а не через файл в репозитории.
 
+`LOG_LEVEL` задаёт уровень логов (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`), а `LOG_FORMAT` — общий формат (`json` или `text`). Одинаковые настройки применяются к API и worker; логи содержат тип процесса и безопасные идентификаторы задач, но не payload или credentials.
+
 Проверки:
 
 ```powershell

@@ -1,13 +1,17 @@
 import argparse
 import asyncio
+import logging
 import signal
 from collections.abc import Iterator
 from contextlib import contextmanager
 from types import FrameType
 
-from ai_seller_core.core.config import get_settings
+from ai_seller_core.core.config import Settings, get_settings
+from ai_seller_core.core.logging import configure_logging
 from ai_seller_core.jobs.worker import JobHandler, Worker
 from ai_seller_core.persistence.base import database_lifespan, get_session_factory
+
+logger = logging.getLogger(__name__)
 
 
 def build_handlers() -> dict[str, JobHandler]:
@@ -37,8 +41,12 @@ def _shutdown_signals(stop_event: asyncio.Event) -> Iterator[None]:
             signal.signal(signum, previous_handler)
 
 
-async def _run_worker(*, queue: str, worker_id: str | None) -> None:
-    settings = get_settings()
+async def _run_worker(
+    *,
+    queue: str,
+    worker_id: str | None,
+    settings: Settings,
+) -> None:
     stop_event = asyncio.Event()
 
     with _shutdown_signals(stop_event):
@@ -58,4 +66,22 @@ def main() -> None:
     parser.add_argument("--queue", default="inbound_dialog")
     parser.add_argument("--worker-id")
     args = parser.parse_args()
-    asyncio.run(_run_worker(queue=args.queue, worker_id=args.worker_id))
+    try:
+        settings = get_settings()
+    except Exception:
+        configure_logging("worker")
+        logger.exception("Worker configuration failed", extra={"queue": args.queue})
+        raise
+
+    configure_logging("worker", settings)
+    try:
+        asyncio.run(
+            _run_worker(
+                queue=args.queue,
+                worker_id=args.worker_id,
+                settings=settings,
+            )
+        )
+    except Exception:
+        logger.exception("Worker startup or runtime failed", extra={"queue": args.queue})
+        raise

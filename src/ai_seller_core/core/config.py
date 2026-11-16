@@ -10,7 +10,8 @@ from sqlalchemy.exc import ArgumentError
 class Settings(BaseSettings):
     app_name: str = "AI Seller Core"
     app_env: Literal["development", "test", "staging", "production"] = "development"
-    log_level: str = "INFO"
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    log_format: Literal["json", "text"] = "json"
     database_url: SecretStr
     qdrant_url: AnyHttpUrl | None = None
     qdrant_api_key: SecretStr | None = None
@@ -25,6 +26,16 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    @field_validator("log_level", mode="before")
+    @classmethod
+    def normalize_log_level(cls, value: object) -> object:
+        return value.upper() if isinstance(value, str) else value
+
+    @field_validator("log_format", mode="before")
+    @classmethod
+    def normalize_log_format(cls, value: object) -> object:
+        return value.lower() if isinstance(value, str) else value
 
     @field_validator("database_url")
     @classmethod

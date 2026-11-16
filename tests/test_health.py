@@ -55,6 +55,39 @@ def test_readiness_returns_service_unavailable_when_qdrant_is_not_configured(
     }
 
 
+def test_readiness_returns_service_unavailable_when_postgresql_is_unavailable(
+    monkeypatch,
+) -> None:
+    async def postgresql_unavailable() -> str:
+        return "unavailable"
+
+    async def qdrant_ok(request, settings) -> str:
+        return "ok"
+
+    monkeypatch.setattr(health_api, "_check_postgresql", postgresql_unavailable)
+    monkeypatch.setattr(health_api, "_check_qdrant", qdrant_ok)
+    app.state.settings = Settings(
+        _env_file=None,
+        database_url="postgresql+asyncpg://user:password@localhost:5432/ai_seller",
+        qdrant_url="http://127.0.0.1:6333",
+    )
+
+    async def request_readiness() -> httpx.Response:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://test",
+        ) as client:
+            return await client.get("/ready")
+
+    response = asyncio.run(request_readiness())
+    assert response.status_code == 503
+    assert response.json() == {
+        "status": "not_ready",
+        "checks": {"postgresql": "unavailable", "qdrant": "ok"},
+    }
+
+
 def test_readiness_returns_ok_when_all_critical_dependencies_are_available(
     monkeypatch,
 ) -> None:

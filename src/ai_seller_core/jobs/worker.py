@@ -35,26 +35,36 @@ class Worker:
         self.session_factory = session_factory or SessionFactory
 
     async def run(self, stop_event: asyncio.Event) -> None:
-        if not self.handlers:
-            logger.warning(
-                "Worker has no registered job handlers and will remain idle",
+        logger.info(
+            "Worker started",
+            extra={"queue": self.queue, "worker_id": self.worker_id},
+        )
+        try:
+            if not self.handlers:
+                logger.warning(
+                    "Worker has no registered job handlers and will remain idle",
+                    extra={"queue": self.queue, "worker_id": self.worker_id},
+                )
+                await stop_event.wait()
+                return
+
+            while not stop_event.is_set():
+                job = await self._claim()
+                if job is None:
+                    try:
+                        await asyncio.wait_for(
+                            stop_event.wait(),
+                            timeout=self.settings.job_poll_interval_seconds,
+                        )
+                    except TimeoutError:
+                        continue
+                    break
+                await self._execute(job)
+        finally:
+            logger.info(
+                "Worker stopped",
                 extra={"queue": self.queue, "worker_id": self.worker_id},
             )
-            await stop_event.wait()
-            return
-
-        while not stop_event.is_set():
-            job = await self._claim()
-            if job is None:
-                try:
-                    await asyncio.wait_for(
-                        stop_event.wait(),
-                        timeout=self.settings.job_poll_interval_seconds,
-                    )
-                except TimeoutError:
-                    continue
-                break
-            await self._execute(job)
 
     async def _claim(self) -> BackgroundJob | None:
         async with self.session_factory() as session, session.begin():
@@ -89,7 +99,12 @@ class Worker:
         except Exception as error:
             logger.exception(
                 "Background job failed",
-                extra={"job_id": job.id, "queue": job.queue, "kind": job.kind},
+                extra={
+                    "job_id": job.id,
+                    "queue": job.queue,
+                    "kind": job.kind,
+                    "correlation_id": job.correlation_id,
+                },
             )
             await self._fail(job.id, str(error))
         else:
