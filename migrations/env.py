@@ -9,7 +9,10 @@ from ai_seller_core.persistence import models  # noqa: F401
 from ai_seller_core.persistence.base import Base
 
 config = context.config
-config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))
+config.set_main_option(
+    "sqlalchemy.url",
+    get_settings().database_url.get_secret_value().replace("%", "%%"),
+)
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 

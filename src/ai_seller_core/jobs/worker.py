@@ -6,8 +6,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai_seller_core.core.config import get_settings
+from ai_seller_core.core.config import Settings, get_settings
 from ai_seller_core.jobs.repository import claim_job
 from ai_seller_core.jobs.retry import retry_delay_seconds
 from ai_seller_core.persistence.base import SessionFactory
@@ -24,13 +25,24 @@ class Worker:
         queue: str,
         handlers: dict[str, JobHandler],
         worker_id: str | None = None,
+        settings: Settings | None = None,
+        session_factory: Callable[[], AsyncSession] | None = None,
     ) -> None:
         self.queue = queue
-        self.handlers = handlers
+        self.handlers = dict(handlers)
         self.worker_id = worker_id or f"{socket.gethostname()}-{queue}"
-        self.settings = get_settings()
+        self.settings = settings or get_settings()
+        self.session_factory = session_factory or SessionFactory
 
     async def run(self, stop_event: asyncio.Event) -> None:
+        if not self.handlers:
+            logger.warning(
+                "Worker has no registered job handlers and will remain idle",
+                extra={"queue": self.queue, "worker_id": self.worker_id},
+            )
+            await stop_event.wait()
+            return
+
         while not stop_event.is_set():
             job = await self._claim()
             if job is None:
@@ -45,7 +57,7 @@ class Worker:
             await self._execute(job)
 
     async def _claim(self) -> BackgroundJob | None:
-        async with SessionFactory() as session, session.begin():
+        async with self.session_factory() as session, session.begin():
             return await claim_job(
                 session,
                 queue=self.queue,
@@ -85,7 +97,7 @@ class Worker:
 
     async def _renew_lease(self, job_id: str) -> bool:
         lease_until = datetime.now(UTC) + timedelta(seconds=self.settings.job_lease_seconds)
-        async with SessionFactory() as session, session.begin():
+        async with self.session_factory() as session, session.begin():
             result = await session.execute(
                 update(BackgroundJob)
                 .where(
@@ -98,7 +110,7 @@ class Worker:
             return result.rowcount == 1
 
     async def _complete(self, job_id: str) -> None:
-        async with SessionFactory() as session, session.begin():
+        async with self.session_factory() as session, session.begin():
             job = await session.scalar(
                 select(BackgroundJob)
                 .where(
@@ -115,7 +127,7 @@ class Worker:
 
     async def _fail(self, job_id: str, error_message: str) -> None:
         now = datetime.now(UTC)
-        async with SessionFactory() as session, session.begin():
+        async with self.session_factory() as session, session.begin():
             job = await session.scalar(
                 select(BackgroundJob)
                 .where(
