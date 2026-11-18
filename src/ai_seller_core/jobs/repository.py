@@ -44,16 +44,20 @@ async def claim_job(
 async def enqueue_job(
     session: AsyncSession,
     *,
+    project_id: str,
     queue: str,
     kind: str,
     payload: dict[str, Any],
     idempotency_key: str,
     correlation_id: str,
 ) -> BackgroundJob:
+    if "project_id" in payload and payload["project_id"] != project_id:
+        raise ValueError("Job payload project_id must match the job project_id")
     job = BackgroundJob(
+        project_id=project_id,
         queue=queue,
         kind=kind,
-        payload=payload,
+        payload={**payload, "project_id": project_id},
         idempotency_key=idempotency_key,
         correlation_id=correlation_id,
     )

@@ -6,8 +6,10 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
+    PrimaryKeyConstraint,
     String,
     Text,
     UniqueConstraint,
@@ -67,14 +69,34 @@ class Project(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False)
 
 
+class Channel(Base):
+    __tablename__ = "channels"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["project_id"],
+            ["projects.id"],
+            name="fk_channels_project_id_projects",
+            ondelete="RESTRICT",
+        ),
+        PrimaryKeyConstraint("project_id", "channel_id", name="pk_channels"),
+    )
+
+    project_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    channel_id: Mapped[str] = mapped_column(String(100), nullable=False)
+
+
 class BackgroundJob(Base):
     __tablename__ = "background_jobs"
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_background_jobs_idempotency"),
         Index("ix_background_jobs_claim", "queue", "status", "available_at"),
+        Index("ix_background_jobs_project", "project_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(
+        String(100), ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False
+    )
     queue: Mapped[str] = mapped_column(String(40), nullable=False)
     kind: Mapped[str] = mapped_column(String(80), nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
@@ -100,10 +122,24 @@ class BackgroundJob(Base):
 class InboxEvent(Base):
     __tablename__ = "inbox"
     __table_args__ = (
-        UniqueConstraint("channel_id", "provider_event_id", name="uq_inbox_provider_event"),
+        UniqueConstraint(
+            "project_id",
+            "channel_id",
+            "provider_event_id",
+            name="uq_inbox_project_channel_event",
+        ),
+        Index("ix_inbox_project", "project_id"),
+        ForeignKeyConstraint(
+            ["project_id", "channel_id"],
+            ["channels.project_id", "channels.channel_id"],
+            name="fk_inbox_project_channel",
+            ondelete="RESTRICT",
+        ),
     )
-
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(
+        String(100), ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False
+    )
     channel_id: Mapped[str] = mapped_column(String(100), nullable=False)
     provider_event_id: Mapped[str] = mapped_column(String(200), nullable=False)
     event_type: Mapped[str] = mapped_column(String(80), nullable=False)
@@ -120,9 +156,22 @@ class OutboxMessage(Base):
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_outbox_idempotency"),
         Index("ix_outbox_delivery", "status", "available_at"),
+        Index("ix_outbox_project", "project_id"),
+        ForeignKeyConstraint(
+            ["project_id", "session_id"],
+            ["dialog_sessions.project_id", "dialog_sessions.id"],
+            name="fk_outbox_project_session",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["project_id", "channel_id"],
+            ["channels.project_id", "channels.channel_id"],
+            name="fk_outbox_project_channel",
+            ondelete="RESTRICT",
+        ),
     )
-
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(String(100), nullable=False)
     channel_id: Mapped[str] = mapped_column(String(100), nullable=False)
     session_id: Mapped[str] = mapped_column(String(100), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -142,9 +191,33 @@ class OutboxMessage(Base):
 
 class DialogSession(Base):
     __tablename__ = "dialog_sessions"
-
+    __table_args__ = (
+        UniqueConstraint("project_id", "id", name="uq_dialog_sessions_project_id_id"),
+        ForeignKeyConstraint(
+            ["project_id", "channel_id"],
+            ["channels.project_id", "channels.channel_id"],
+            name="fk_dialog_sessions_project_channel",
+            ondelete="RESTRICT",
+        ),
+        Index(
+            "ix_dialog_sessions_active_lookup",
+            "project_id",
+            "channel_id",
+            "external_chat_id",
+            unique=True,
+        ),
+        Index(
+            "ix_dialog_sessions_closed_resume",
+            "project_id",
+            "channel_id",
+            "customer_id",
+            "state",
+        ),
+    )
     id: Mapped[str] = mapped_column(String(100), primary_key=True)
-    project_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    project_id: Mapped[str] = mapped_column(
+        String(100), ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
     channel_id: Mapped[str] = mapped_column(String(100), nullable=False)
     customer_id: Mapped[str] = mapped_column(String(100), nullable=False)
     external_chat_id: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -168,28 +241,23 @@ class DialogSession(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
-    __table_args__ = (
-        Index(
-            "ix_dialog_sessions_active_lookup",
-            "project_id",
-            "channel_id",
-            "external_chat_id",
-            unique=True,
-        ),
-        Index(
-            "ix_dialog_sessions_closed_resume",
-            "project_id",
-            "channel_id",
-            "customer_id",
-            "state",
-        ),
-    )
-
-
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
-
+    __table_args__ = (
+        Index("ix_chat_messages_session_created", "session_id", "created_at"),
+        Index("ix_chat_messages_project_created", "project_id", "created_at"),
+        UniqueConstraint(
+            "project_id", "session_id", "external_message_id", name="uq_chat_messages_external"
+        ),
+        ForeignKeyConstraint(
+            ["project_id", "session_id"],
+            ["dialog_sessions.project_id", "dialog_sessions.id"],
+            name="fk_chat_messages_project_session",
+            ondelete="RESTRICT",
+        ),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(String(100), nullable=False)
     session_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     role: Mapped[str] = mapped_column(String(32), nullable=False)
     content: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
@@ -199,7 +267,3 @@ class ChatMessage(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
-    __table_args__ = (
-        Index("ix_chat_messages_session_created", "session_id", "created_at"),
-        UniqueConstraint("session_id", "external_message_id", name="uq_chat_messages_external"),
-    )

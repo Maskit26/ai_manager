@@ -10,6 +10,7 @@ from ai_seller_core.persistence.models import OutboxMessage
 async def enqueue_outbound_message(
     session: AsyncSession,
     *,
+    project_id: str,
     channel_id: str,
     session_id: str,
     payload: dict[str, Any],
@@ -19,6 +20,7 @@ async def enqueue_outbound_message(
 ) -> OutboxMessage:
     """Write delivery intent and its durable job in the caller's transaction."""
     message = OutboxMessage(
+        project_id=project_id,
         channel_id=channel_id,
         session_id=session_id,
         payload=payload,
@@ -29,9 +31,10 @@ async def enqueue_outbound_message(
     await session.flush()
     await enqueue_job(
         session,
+        project_id=project_id,
         queue="outbound_delivery",
         kind="deliver_outbox_message",
-        payload={"outbox_id": message.id},
+        payload={"outbox_id": message.id, "project_id": project_id},
         idempotency_key=f"outbox:{idempotency_key}",
         correlation_id=correlation_id,
     )

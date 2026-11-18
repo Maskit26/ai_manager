@@ -78,6 +78,8 @@ class Worker:
     async def _execute(self, job: BackgroundJob) -> None:
         handler = self.handlers.get(job.kind)
         try:
+            if job.payload.get("project_id") != job.project_id:
+                raise ValueError("Job payload project_id does not match the job project_id")
             if handler is None:
                 raise LookupError(f"No handler registered for job kind {job.kind!r}")
             task = asyncio.create_task(handler(job.payload))

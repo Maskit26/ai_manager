@@ -82,7 +82,12 @@ def build_inbound_event_handler(
             if event.status in {"processed", "ignored", "failed"}:
                 return
 
+            if payload.get("project_id") != event.project_id:
+                raise ValueError("Inbound job project_id does not match the inbox event")
+
             command = decoder.decode(event)
+            if command.project_id != event.project_id:
+                raise ValueError("Decoded command project_id does not match the inbox event")
             correlation_id = event.correlation_id
             sanitized_text = sanitizer.sanitize(command.text)
             if sanitized_text is None:

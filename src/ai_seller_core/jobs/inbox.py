@@ -17,6 +17,7 @@ class IngestResult:
 async def ingest_channel_event(
     session: AsyncSession,
     *,
+    project_id: str,
     channel_id: str,
     provider_event_id: str,
     event_type: str,
@@ -27,6 +28,7 @@ async def ingest_channel_event(
     statement = (
         insert(InboxEvent)
         .values(
+            project_id=project_id,
             channel_id=channel_id,
             provider_event_id=provider_event_id,
             event_type=event_type,
@@ -43,9 +45,10 @@ async def ingest_channel_event(
     if event_type in {"message", "callback"}:
         await enqueue_job(
             session,
+            project_id=project_id,
             queue="inbound_dialog",
             kind="process_inbound_event",
-            payload={"inbox_event_id": event_id},
+            payload={"inbox_event_id": event_id, "project_id": project_id},
             idempotency_key=f"inbox:{event_id}",
             correlation_id=correlation_id,
         )

@@ -54,7 +54,7 @@
 | `accounts`, `account_memberships` | Уникальность внешнего ID аккаунта; уникальность membership в рамках аккаунта. |
 | `projects` | FK на аккаунт; индекс по `account_id`. |
 | `agents`, `agent_releases` | Уникальный release ID; уникальность `(agent_id, version)`; `active_release_id` ссылается на release того же агента и может быть пустым до первой публикации. Опубликованные снимки неизменяемы. |
-| `channels` | Уникальный идентификатор подключения; FK на проект. |
+| `channels` | Составной ключ `(project_id, channel_id)`; проектная принадлежность канала. |
 | `catalog_sources` | Ограничение не более одного авторитетного источника на проект. |
 | `catalog_imports` | Индексы по source, status и времени создания. |
 | `catalog_import_errors` | Уникальность `(import_id, row_number)`; ограничение объёма/срока хранения. |
@@ -63,7 +63,7 @@
 | `customers`, `customer_identities` | Уникальность клиента определяется принятой моделью идентификации; для identities — `(project_id, channel_type, external_user_id)`. |
 | `chat_sessions` | Частичный уникальный индекс для не более одной активной сессии по `(project_id, channel_id, external_chat_id)`; отдельный индекс для поиска закрытой сессии при возобновлении. Все связанные ID должны относиться к одному проекту. Захват lease атомарно увеличивает `lease_fence`. |
 | `chat_messages` | Уникальность внешнего message ID в рамках канала; индекс `(session_id, created_at)`. |
-| `inbox` | Уникальность `(channel_id, external_event_id)`. |
+| `inbox` | Уникальность `(project_id, channel_id, provider_event_id)`. |
 | `background_jobs` | Индекс выбора задач `(status, available_at, priority)`; credentials исключаются из payload. |
 | `outbox` | Уникальный idempotency key; индекс готовых доставок; проверка session fence перед созданием записи. |
 | `tool_executions` | Индекс по session/message; credentials и секретные поля исключаются. |
@@ -107,7 +107,7 @@
 
 ## 6. Текущее состояние реализации
 
-Модели и миграции persistence покрывают `accounts`, `account_memberships`, `projects`, `background_jobs`, `inbox`, `outbox`, `dialog_sessions` и `chat_messages`. Проекты и membership связаны внешними ключами с аккаунтом. В `DialogSession` есть `project_id` и поля lease, но граф FK для остальной предметной области ещё не построен. Модели agents/releases, каталога, клиентов, KB, заявок, аудита и биллинга ещё не реализованы. Реализацию session fencing и операций jobs/outbox нужно сверять с приведёнными инвариантами по мере разработки каждой функции.
+Модели и миграции persistence покрывают `accounts`, `account_memberships`, `projects`, `channels`, `background_jobs`, `inbox`, `outbox`, `dialog_sessions` и `chat_messages`. Проекты и membership связаны внешними ключами с аккаунтом. Канал принадлежит проекту, а ссылки на канал в сессиях, inbox и outbox ограничены составным внешним ключом `(project_id, channel_id)`. Сессии, сообщения и outbox-записи связаны с проектом; сообщения и outbox не могут ссылаться на сессию другого проекта. Inbox и фоновые задачи также несут `project_id`. Модели agents/releases, каталога, клиентов, KB, заявок, аудита и биллинга ещё не реализованы. Реализацию session fencing и операций jobs/outbox нужно сверять с приведёнными инвариантами по мере разработки каждой функции.
 
 Это целевая логическая модель, а не утверждение, что все перечисленные таблицы или правила удаления уже реализованы.
 

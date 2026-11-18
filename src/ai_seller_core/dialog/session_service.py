@@ -134,6 +134,7 @@ async def open_or_resume_session(
     dialog.last_activity_at = now
     lease = await acquire_session_lease(
         db,
+        project_id=project_id,
         session_id=dialog.id,
         owner=worker_id,
         lease_seconds=lease_seconds,
@@ -168,7 +169,10 @@ async def close_session(
     await assert_current_fence(db, lease=lease)
     dialog = await db.scalar(
         select(DialogSession)
-        .where(DialogSession.id == lease.session_id)
+        .where(
+            DialogSession.id == lease.session_id,
+            DialogSession.project_id == lease.project_id,
+        )
         .with_for_update()
     )
     if dialog is None:
@@ -201,7 +205,10 @@ async def commit_turn(
     await assert_current_fence(db, lease=lease)
     dialog = await db.scalar(
         select(DialogSession)
-        .where(DialogSession.id == lease.session_id)
+        .where(
+            DialogSession.id == lease.session_id,
+            DialogSession.project_id == lease.project_id,
+        )
         .with_for_update()
     )
     if dialog is None:
@@ -213,6 +220,7 @@ async def commit_turn(
     if inbound is not None:
         values = {
             "id": str(uuid4()),
+            "project_id": dialog.project_id,
             "session_id": dialog.id,
             "role": inbound.role,
             "content": inbound.content,
@@ -242,6 +250,7 @@ async def commit_turn(
     for message_input, intent in zip(outbound, outbox, strict=True):
         message = ChatMessage(
             id=str(uuid4()),
+            project_id=dialog.project_id,
             session_id=dialog.id,
             role=message_input.role,
             content=message_input.content,
@@ -253,6 +262,7 @@ async def commit_turn(
 
         outbox_message = await enqueue_outbound_message(
             db,
+            project_id=dialog.project_id,
             channel_id=dialog.channel_id,
             session_id=dialog.id,
             payload=intent.payload,
