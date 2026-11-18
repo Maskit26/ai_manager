@@ -200,7 +200,8 @@ docs/
 ├── BACKEND_MVP_TZ.md                     Источник истины по backend MVP
 ├── core-architecture.md                  Архитектурные решения
 ├── EXTERNAL_INTEGRATIONS.md              Спецификация внешних интеграций
-└── SERVICE_BLOCK_DIAGRAM.md              Блок-схемы сервиса и потоков
+├── SERVICE_BLOCK_DIAGRAM.md               Блок-схемы сервиса и потоков
+└── DATA_MODEL_DESIGN.md                   Проект схемы данных Части 2
 ```
 
 ## Границы запуска

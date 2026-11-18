@@ -13,6 +13,7 @@ ai_manager/
 │   ├── core-architecture.md       # Architecture boundaries, components, data ownership, LLM boundary, PII flow, deployment
 │   ├── SERVICE_BLOCK_DIAGRAM.md   # Mermaid diagrams: component topology, event flow, session lifecycle, outbox, roles
 │   ├── EXTERNAL_INTEGRATIONS.md   # Integration contracts: MAX Messenger (MVP-1), future channels/CRM/LLM providers
+│   ├── DATA_MODEL_DESIGN.md       # Logical schema proposal for Part 2 and account/project ownership
 │   └── README.md                  # Documentation index + target repo structure with [есть]/[частично]/[план] markers
 ├── migrations/                    # Alembic migrations (offline SQL)
 │   ├── env.py
@@ -66,6 +67,7 @@ ai_manager/
 |---------|---------|
 | **Requirements (normative)** | `docs/BACKEND_MVP_TZ.md` |
 | **Architecture decisions** | `docs/core-architecture.md` |
+| **Data model design** | `docs/DATA_MODEL_DESIGN.md` |
 | **Visual diagrams** | `docs/SERVICE_BLOCK_DIAGRAM.md` |
 | **Integration specs** | `docs/EXTERNAL_INTEGRATIONS.md` |
 | **App entrypoint** | `src/ai_seller_core/main.py` |

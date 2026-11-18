@@ -51,6 +51,10 @@ async def run_migrations_online() -> None:
 if context.is_offline_mode():
     run_migrations_offline()
 else:
-    import asyncio
+    connection = config.attributes.get("connection")
+    if connection is not None:
+        do_run_migrations(connection)
+    else:
+        import asyncio
 
-    asyncio.run(run_migrations_online())
+        asyncio.run(run_migrations_online())
