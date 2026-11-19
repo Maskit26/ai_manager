@@ -92,7 +92,7 @@ def test_accounts_projects_postgresql_migrations() -> None:
                 await connection.run_sync(upgrade)
                 assert await connection.scalar(text("SELECT count(*) FROM alembic_version")) == 1
                 assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                    "20261118_channels"
+                    "20261119_agent_releases"
                 )
 
                 project = {
@@ -137,6 +137,34 @@ def test_accounts_projects_postgresql_migrations() -> None:
                         "role": "owner",
                     },
                 )
+                await connection.execute(
+                    text(
+                        "INSERT INTO agents (id, project_id, status) VALUES "
+                        "('agent-1', 'project-1', 'draft'), "
+                        "('agent-2', 'project-2', 'draft')"
+                    )
+                )
+                await connection.execute(
+                    text(
+                        """INSERT INTO agent_releases
+                        (id, project_id, agent_id, version, snapshot) VALUES
+                        ('release-1', 'project-1', 'agent-1', 1,
+                         '{"prompt": {}, "tone": {}, "model_settings": {},
+                           "sales_rules": {}, "functions": {},
+                           "response_settings": {}}'::jsonb),
+                        ('release-2', 'project-2', 'agent-2', 1,
+                         '{"prompt": {}, "tone": {}, "model_settings": {},
+                           "sales_rules": {}, "functions": {},
+                           "response_settings": {}}'::jsonb)"""
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "UPDATE agents SET status = 'active', active_release_id = "
+                        "CASE id WHEN 'agent-1' THEN 'release-1' ELSE 'release-2' END"
+                    )
+                )
+
                 session_row = {
                     "id": "session-1",
                     "project_id": "project-1",
@@ -255,13 +283,13 @@ def test_accounts_projects_postgresql_migrations() -> None:
                         channel_id="channel-1",
                         customer_id="customer-1",
                         external_chat_id="chat-1",
-                        release_id="release-1",
                         worker_id="project-2-worker",
                         lease_seconds=60,
                     )
                     assert context is not None
                     assert context.project_id == "project-2"
                     assert context.session_id != "session-1"
+                    assert context.release_id == "release-2"
 
                     with pytest.raises(RuntimeError):
                         await assert_current_fence(
@@ -317,6 +345,212 @@ def test_accounts_projects_postgresql_migrations() -> None:
                         async with connection.begin_nested():
                             await connection.execute(statement, values)
                 assert await connection.scalar(select(Project.id)) == "project-1"
+        finally:
+            try:
+                if schema_created:
+                    async with engine.begin() as connection:
+                        await connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+            finally:
+                await engine.dispose()
+
+    asyncio.run(verify())
+
+
+def test_agent_release_lifecycle_postgresql() -> None:
+    import asyncio
+    import os
+    from uuid import uuid4
+
+    import pytest
+    from alembic import command
+    from pydantic import ValidationError
+    from sqlalchemy import select, text, update
+    from sqlalchemy.exc import DBAPIError
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+
+    from ai_seller_core.core.config import Settings
+    from ai_seller_core.dialog.session_service import open_or_resume_session
+    from ai_seller_core.persistence.agent_releases import (
+        create_agent,
+        publish_agent_release,
+        rollback_agent_release,
+        save_agent_draft,
+    )
+    from ai_seller_core.persistence.models import AgentRelease, DialogSession
+
+    test_database_url = os.environ.pop("DATABASE_URL", None)
+    try:
+        database_url = Settings().database_url.get_secret_value()
+    except ValidationError as error:
+        if any(
+            item["loc"] == ("database_url",) and item["type"] == "missing"
+            for item in error.errors()
+        ):
+            pytest.skip("Configure DATABASE_URL for PostgreSQL tests")
+        raise
+    finally:
+        if test_database_url is not None:
+            os.environ["DATABASE_URL"] = test_database_url
+
+    def config_for(version: int) -> dict[str, object]:
+        return {
+            "prompt": {"text": f"prompt-{version}"},
+            "tone": {"style": "clear"},
+            "model_settings": {"temperature": 0.1 * version},
+            "sales_rules": {"version": version},
+            "functions": {"enabled": ["lookup"]},
+            "response_settings": {"format": "plain"},
+        }
+
+    async def verify() -> None:
+        engine = create_async_engine(database_url, pool_size=2, max_overflow=0)
+        schema = f"test_agent_releases_{uuid4().hex}"
+        schema_created = False
+        try:
+            async with engine.begin() as connection:
+                await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+            schema_created = True
+
+            async with engine.begin() as connection:
+                await connection.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+
+                def upgrade(sync_connection) -> None:
+                    config = alembic_config()
+                    config.attributes["connection"] = sync_connection
+                    command.upgrade(config, "head")
+
+                await connection.run_sync(upgrade)
+                await connection.execute(
+                    text(
+                        "INSERT INTO accounts (id, external_id, status) "
+                        "VALUES ('agent-test-account', 'agent-test-external', 'active')"
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "INSERT INTO projects "
+                        "(id, account_id, locale, timezone, settings, status) "
+                        "VALUES ('agent-test-project', 'agent-test-account', "
+                        "'en-US', 'UTC', '{}'::jsonb, 'active')"
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "INSERT INTO channels (project_id, channel_id) "
+                        "VALUES ('agent-test-project', 'agent-test-channel')"
+                    )
+                )
+
+            async with AsyncSession(engine) as db:
+                async with db.begin():
+                    await db.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+                    await create_agent(db, project_id="agent-test-project")
+                    with pytest.raises(ValueError, match="excluded field"):
+                        await save_agent_draft(
+                            db,
+                            project_id="agent-test-project",
+                            config={
+                                **config_for(1),
+                                "model_settings": {
+                                    "temperature": 0.1,
+                                    "api_key": "test-placeholder",
+                                },
+                            },
+                        )
+                    await save_agent_draft(
+                        db,
+                        project_id="agent-test-project",
+                        config=config_for(1),
+                    )
+                    release_1 = await publish_agent_release(
+                        db,
+                        project_id="agent-test-project",
+                    )
+                    release_1_id = release_1.id
+
+            barrier = asyncio.Barrier(2)
+
+            async def publish_next_release() -> str:
+                async with AsyncSession(engine) as db:
+                    async with db.begin():
+                        await db.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+                        await barrier.wait()
+                        await save_agent_draft(
+                            db,
+                            project_id="agent-test-project",
+                            config=config_for(2),
+                        )
+                        release = await publish_agent_release(
+                            db,
+                            project_id="agent-test-project",
+                        )
+                        return release.id
+
+            async def create_concurrent_session() -> tuple[str, str]:
+                async with AsyncSession(engine) as db:
+                    async with db.begin():
+                        await db.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+                        await barrier.wait()
+                        context = await open_or_resume_session(
+                            db,
+                            project_id="agent-test-project",
+                            channel_id="agent-test-channel",
+                            customer_id="agent-test-customer",
+                            external_chat_id="agent-test-chat",
+                            worker_id="agent-test-worker",
+                            lease_seconds=60,
+                        )
+                        assert context is not None
+                        return context.session_id, context.release_id
+
+            release_2_id, (session_id, pinned_release_id) = await asyncio.gather(
+                publish_next_release(),
+                create_concurrent_session(),
+            )
+            assert pinned_release_id in {release_1_id, release_2_id}
+
+            async with AsyncSession(engine) as db:
+                async with db.begin():
+                    await db.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+                    pinned_release = await db.scalar(
+                        select(AgentRelease).where(AgentRelease.id == pinned_release_id)
+                    )
+                    assert pinned_release is not None
+                    assert pinned_release.snapshot in (
+                        config_for(1),
+                        config_for(2),
+                    )
+                    with pytest.raises(DBAPIError):
+                        async with db.begin_nested():
+                            await db.execute(
+                                update(AgentRelease)
+                                .where(AgentRelease.id == pinned_release_id)
+                                .values(snapshot=config_for(99))
+                            )
+
+            async with AsyncSession(engine) as db:
+                async with db.begin():
+                    await db.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+                    await rollback_agent_release(
+                        db,
+                        project_id="agent-test-project",
+                        release_id=release_1_id,
+                    )
+                    new_context = await open_or_resume_session(
+                        db,
+                        project_id="agent-test-project",
+                        channel_id="agent-test-channel",
+                        customer_id="agent-test-customer",
+                        external_chat_id="agent-test-chat-after-rollback",
+                        worker_id="agent-test-worker",
+                        lease_seconds=60,
+                    )
+                    assert new_context is not None
+                    assert new_context.release_id == release_1_id
+                    existing_release_id = await db.scalar(
+                        select(DialogSession.release_id).where(DialogSession.id == session_id)
+                    )
+                    assert existing_release_id == pinned_release_id
         finally:
             try:
                 if schema_created:

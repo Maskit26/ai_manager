@@ -42,7 +42,6 @@ class EventDecoder(Protocol):
     def decode(self, event: InboxEvent) -> InboundCommand: ...
 
 
-ReleaseResolver = Callable[[AsyncSession, str], Awaitable[str | None]]
 RuntimeFactory = Callable[[str, str], DialogRuntime]
 
 
@@ -51,7 +50,6 @@ def build_inbound_event_handler(
     worker_id: str,
     decoder: EventDecoder,
     sanitizer: MessageSanitizer,
-    resolve_release_id: ReleaseResolver,
     runtime_for_project: RuntimeFactory,
     lease_seconds: int,
     history_limit: int = 20,
@@ -99,10 +97,7 @@ def build_inbound_event_handler(
                 "text": sanitized_text,
             }
 
-            release_id = await resolve_release_id(db, command.project_id)
-            if release_id is None:
-                event.status = "ignored"
-                return
+
 
             event.status = "processing"
             context: SessionContext | None = await open_or_resume_session(
@@ -111,7 +106,6 @@ def build_inbound_event_handler(
                 channel_id=command.channel_id,
                 customer_id=command.customer_id,
                 external_chat_id=command.external_chat_id,
-                release_id=release_id,
                 worker_id=worker_id,
                 lease_seconds=lease_seconds,
             )

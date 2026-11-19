@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_seller_core.jobs.outbox import enqueue_outbound_message
-from ai_seller_core.persistence.models import ChatMessage, DialogSession
+from ai_seller_core.persistence.models import Agent, ChatMessage, DialogSession
 from ai_seller_core.persistence.session_lease import (
     SessionLease,
     acquire_session_lease,
@@ -54,7 +54,6 @@ async def open_or_resume_session(
     channel_id: str,
     customer_id: str,
     external_chat_id: str,
-    release_id: str,
     worker_id: str,
     lease_seconds: int,
 ) -> SessionContext | None:
@@ -81,6 +80,14 @@ async def open_or_resume_session(
 
     now = datetime.now(UTC)
     if dialog is None:
+        agent = await db.scalar(
+            select(Agent).where(Agent.project_id == project_id).with_for_update()
+        )
+        if agent is None:
+            raise LookupError(f"No agent exists for project {project_id!r}")
+        if agent.status != "active" or agent.active_release_id is None:
+            raise RuntimeError("Cannot create a dialog session without an active agent release")
+
         new_session_id = str(uuid4())
         create = (
             insert(DialogSession)
@@ -90,7 +97,7 @@ async def open_or_resume_session(
                 channel_id=channel_id,
                 customer_id=customer_id,
                 external_chat_id=external_chat_id,
-                release_id=release_id,
+                release_id=agent.active_release_id,
                 state="active",
                 variables={},
                 last_activity_at=now,

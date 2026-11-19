@@ -19,7 +19,7 @@
 | `accounts` | Корневая сущность аккаунта | На неё ссылаются `projects` и аккаунтные записи. |
 | `account_memberships`, `entitlements` | Аккаунт: `account_id` | Каждая запись принадлежит аккаунту. Уникальность membership — внутри аккаунта; роли проверяются сервером. |
 | `projects` | Проект принадлежит аккаунту: `account_id` | `account_id -> accounts.id`; индекс по `account_id`. |
-| `agents`, `agent_drafts`, `agent_releases` | Проект: `project_id` | Агент принадлежит проекту; draft и неизменяемые releases — агенту в том же проекте. До первой публикации `active_release_id` может быть пустым; иначе он должен указывать на release того же агента. Версия уникальна в пределах агента. |
+| `agents`, `agent_drafts`, `agent_releases` | Проект: `project_id` | Агент принадлежит проекту; draft и неизменяемые releases — агенту в том же проекте. До первой публикации `active_release_id` может быть пустым; иначе он должен указывать на release того же агента. Версия уникальна в пределах агента. Draft хранит изменяемый JSONB `config`; release — неизменяемый JSONB `snapshot` с ключами `prompt`, `tone`, `model_settings`, `sales_rules`, `functions`, `response_settings`. Credentials канала, каталог и база знаний в snapshot не включаются. |
 | `channels` | Проект: `project_id` | Канал принадлежит проекту. Идентификатор подключения уникален согласно контракту интеграции. |
 | `catalog_sources` | Проект: `project_id` | Источник принадлежит проекту; в MVP-1 допускается не более одного авторитетного источника. При замене старый источник деактивируется, история импортов и товаров сохраняется. |
 | `catalog_imports`, `catalog_import_errors` | Проект: `project_id` | Импорт ссылается на источник того же проекта; ошибки импорта принадлежат импорту того же проекта. |
@@ -53,7 +53,7 @@
 |---|---|
 | `accounts`, `account_memberships` | Уникальность внешнего ID аккаунта; уникальность membership в рамках аккаунта. |
 | `projects` | FK на аккаунт; индекс по `account_id`. |
-| `agents`, `agent_releases` | Уникальный release ID; уникальность `(agent_id, version)`; `active_release_id` ссылается на release того же агента и может быть пустым до первой публикации. Опубликованные снимки неизменяемы. |
+| `agents`, `agent_releases` | Уникальный release ID; уникальность `(agent_id, version)`; `active_release_id` ссылается на release того же агента и может быть пустым до первой публикации. Опубликованные JSONB-снимки неизменяемы на уровне БД. Публикация, создание новой сессии и rollback блокируют одну строку агента; rollback атомарно переключает только `active_release_id`, не изменяя существующие сессии и releases. |
 | `channels` | Составной ключ `(project_id, channel_id)`; проектная принадлежность канала. |
 | `catalog_sources` | Ограничение не более одного авторитетного источника на проект. |
 | `catalog_imports` | Индексы по source, status и времени создания. |

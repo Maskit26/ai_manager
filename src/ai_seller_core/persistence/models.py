@@ -85,6 +85,88 @@ class Channel(Base):
     channel_id: Mapped[str] = mapped_column(String(100), nullable=False)
 
 
+class Agent(Base):
+    __tablename__ = "agents"
+    __table_args__ = (
+        UniqueConstraint("project_id", name="uq_agents_project_id"),
+        UniqueConstraint("project_id", "id", name="uq_agents_project_id_id"),
+        CheckConstraint(
+            "status IN ('draft', 'active', 'paused', 'disabled')",
+            name="ck_agents_status",
+        ),
+        ForeignKeyConstraint(
+            ["project_id", "id", "active_release_id"],
+            ["agent_releases.project_id", "agent_releases.agent_id", "agent_releases.id"],
+            name="fk_agents_active_release",
+            ondelete="RESTRICT",
+            use_alter=True,
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(
+        String(100), ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="draft", server_default="draft"
+    )
+    active_release_id: Mapped[str | None] = mapped_column(String(36))
+
+
+class AgentDraft(Base):
+    __tablename__ = "agent_drafts"
+    __table_args__ = (
+        CheckConstraint("jsonb_typeof(config) = 'object'", name="ck_agent_drafts_config_object"),
+        ForeignKeyConstraint(
+            ["project_id", "agent_id"],
+            ["agents.project_id", "agents.id"],
+            name="fk_agent_drafts_agent",
+            ondelete="CASCADE",
+        ),
+    )
+
+    project_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    agent_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AgentRelease(Base):
+    __tablename__ = "agent_releases"
+    __table_args__ = (
+        CheckConstraint(
+            "jsonb_typeof(snapshot) = 'object'",
+            name="ck_agent_releases_snapshot_object",
+        ),
+        CheckConstraint("version > 0", name="ck_agent_releases_version_positive"),
+        ForeignKeyConstraint(
+            ["project_id", "agent_id"],
+            ["agents.project_id", "agents.id"],
+            name="fk_agent_releases_agent",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("agent_id", "version", name="uq_agent_releases_agent_version"),
+        UniqueConstraint("project_id", "id", name="uq_agent_releases_project_id_id"),
+        UniqueConstraint(
+            "project_id",
+            "agent_id",
+            "id",
+            name="uq_agent_releases_project_agent_id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    agent_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class BackgroundJob(Base):
     __tablename__ = "background_jobs"
     __table_args__ = (
@@ -193,6 +275,12 @@ class DialogSession(Base):
     __tablename__ = "dialog_sessions"
     __table_args__ = (
         UniqueConstraint("project_id", "id", name="uq_dialog_sessions_project_id_id"),
+        ForeignKeyConstraint(
+            ["project_id", "release_id"],
+            ["agent_releases.project_id", "agent_releases.id"],
+            name="fk_dialog_sessions_project_release",
+            ondelete="RESTRICT",
+        ),
         ForeignKeyConstraint(
             ["project_id", "channel_id"],
             ["channels.project_id", "channels.channel_id"],
