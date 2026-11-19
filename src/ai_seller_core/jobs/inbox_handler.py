@@ -108,6 +108,7 @@ def build_inbound_event_handler(
                 external_chat_id=command.external_chat_id,
                 worker_id=worker_id,
                 lease_seconds=lease_seconds,
+                correlation_id=event.correlation_id,
             )
             if context is None:
                 raise RuntimeError("Dialog session is currently leased by another worker")
@@ -163,6 +164,7 @@ def build_inbound_event_handler(
                 inbound=inbound,
                 outbound=outbound,
                 outbox=outbox,
+                correlation_id=event.correlation_id,
             )
             event.status = "processed"
 

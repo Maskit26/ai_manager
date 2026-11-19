@@ -275,6 +275,21 @@ class DialogSession(Base):
     __tablename__ = "dialog_sessions"
     __table_args__ = (
         UniqueConstraint("project_id", "id", name="uq_dialog_sessions_project_id_id"),
+        UniqueConstraint(
+            "project_id",
+            "id",
+            "channel_id",
+            name="uq_dialog_sessions_project_id_channel_id",
+        ),
+        CheckConstraint("state IN ('active', 'closed')", name="ck_dialog_sessions_state"),
+        CheckConstraint(
+            "close_reason IS NULL OR close_reason IN "
+            "('max_chat_closed', 'idle_ttl', 'manual')",
+            name="ck_dialog_sessions_close_reason",
+        ),
+        CheckConstraint("reopen_count >= 0", name="ck_dialog_sessions_reopen_count"),
+        CheckConstraint("lease_fence >= 0", name="ck_dialog_sessions_lease_fence"),
+        CheckConstraint("version >= 0", name="ck_dialog_sessions_version"),
         ForeignKeyConstraint(
             ["project_id", "release_id"],
             ["agent_releases.project_id", "agent_releases.id"],
@@ -310,7 +325,9 @@ class DialogSession(Base):
     customer_id: Mapped[str] = mapped_column(String(100), nullable=False)
     external_chat_id: Mapped[str] = mapped_column(String(200), nullable=False)
     release_id: Mapped[str] = mapped_column(String(100), nullable=False)
-    state: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    state: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="active", server_default="active"
+    )
     variables: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     last_activity_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -318,10 +335,15 @@ class DialogSession(Base):
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     close_reason: Mapped[str | None] = mapped_column(String(64))
     closed_by: Mapped[str | None] = mapped_column(String(100))
-    reopen_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reopen_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     lease_owner: Mapped[str | None] = mapped_column(String(100))
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    lease_fence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lease_fence: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -329,24 +351,91 @@ class DialogSession(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
+class DomainEvent(Base):
+    __tablename__ = "domain_events"
+    __table_args__ = (
+        CheckConstraint("event_type <> ''", name="ck_domain_events_event_type"),
+        CheckConstraint("schema_version > 0", name="ck_domain_events_schema_version"),
+        CheckConstraint(
+            "jsonb_typeof(tenant_ids) = 'object'",
+            name="ck_domain_events_tenant_ids_object",
+        ),
+        CheckConstraint("jsonb_typeof(payload) = 'object'", name="ck_domain_events_payload_object"),
+        ForeignKeyConstraint(
+            ["project_id"],
+            ["projects.id"],
+            name="fk_domain_events_project",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["project_id", "session_id"],
+            ["dialog_sessions.project_id", "dialog_sessions.id"],
+            name="fk_domain_events_project_session",
+            ondelete="RESTRICT",
+        ),
+        Index(
+            "ix_domain_events_project_session_occurred",
+            "project_id",
+            "session_id",
+            "occurred_at",
+        ),
+        Index(
+            "ix_domain_events_aggregate",
+            "project_id",
+            "aggregate_type",
+            "aggregate_id",
+            "occurred_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    session_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    aggregate_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    aggregate_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    tenant_ids: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    schema_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
+    correlation_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
     __table_args__ = (
         Index("ix_chat_messages_session_created", "session_id", "created_at"),
         Index("ix_chat_messages_project_created", "project_id", "created_at"),
+        CheckConstraint(
+            "role IN ('user', 'assistant')",
+            name="ck_chat_messages_role",
+        ),
+        CheckConstraint(
+            "delivery_status IN "
+            "('received', 'pending', 'sending', 'sent', 'retrying', 'delivery_unknown', 'failed')",
+            name="ck_chat_messages_delivery_status",
+        ),
         UniqueConstraint(
-            "project_id", "session_id", "external_message_id", name="uq_chat_messages_external"
+            "project_id",
+            "channel_id",
+            "external_message_id",
+            name="uq_chat_messages_external",
         ),
         ForeignKeyConstraint(
-            ["project_id", "session_id"],
-            ["dialog_sessions.project_id", "dialog_sessions.id"],
-            name="fk_chat_messages_project_session",
+            ["project_id", "session_id", "channel_id"],
+            ["dialog_sessions.project_id", "dialog_sessions.id", "dialog_sessions.channel_id"],
+            name="fk_chat_messages_project_session_channel",
             ondelete="RESTRICT",
         ),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     project_id: Mapped[str] = mapped_column(String(100), nullable=False)
     session_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    channel_id: Mapped[str] = mapped_column(String(100), nullable=False)
     role: Mapped[str] = mapped_column(String(32), nullable=False)
     content: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     external_message_id: Mapped[str | None] = mapped_column(String(200))

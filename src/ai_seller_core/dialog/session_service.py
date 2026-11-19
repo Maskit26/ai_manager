@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_seller_core.jobs.outbox import enqueue_outbound_message
-from ai_seller_core.persistence.models import Agent, ChatMessage, DialogSession
+from ai_seller_core.persistence.models import Agent, ChatMessage, DialogSession, DomainEvent
 from ai_seller_core.persistence.session_lease import (
     SessionLease,
     acquire_session_lease,
@@ -47,6 +47,32 @@ class TurnResult:
     duplicate: bool = False
 
 
+def _record_domain_event(
+    db: AsyncSession,
+    *,
+    project_id: str,
+    session_id: str,
+    event_type: str,
+    correlation_id: str | None,
+    payload: dict[str, Any],
+    occurred_at: datetime,
+) -> None:
+    db.add(
+        DomainEvent(
+            project_id=project_id,
+            session_id=session_id,
+            event_type=event_type,
+            aggregate_type="dialog_session",
+            aggregate_id=session_id,
+            tenant_ids={"project_id": project_id},
+            occurred_at=occurred_at,
+            schema_version=1,
+            correlation_id=correlation_id or str(uuid4()),
+            payload=payload,
+        )
+    )
+
+
 async def open_or_resume_session(
     db: AsyncSession,
     *,
@@ -56,6 +82,7 @@ async def open_or_resume_session(
     external_chat_id: str,
     worker_id: str,
     lease_seconds: int,
+    correlation_id: str | None = None,
 ) -> SessionContext | None:
     """Find/create the conversation and acquire its session lease in the caller's txn.
 
@@ -79,6 +106,7 @@ async def open_or_resume_session(
     dialog = await db.scalar(lookup)
 
     now = datetime.now(UTC)
+    created = False
     if dialog is None:
         agent = await db.scalar(
             select(Agent).where(Agent.project_id == project_id).with_for_update()
@@ -116,6 +144,7 @@ async def open_or_resume_session(
             .returning(DialogSession.id)
         )
         created_id = await db.scalar(create)
+        created = created_id is not None
         dialog = await db.scalar(
             select(DialogSession)
             .where(
@@ -131,14 +160,22 @@ async def open_or_resume_session(
     if dialog.lease_until is not None and dialog.lease_until > now:
         return None
 
+    reopen_event_payload: dict[str, Any] | None = None
     if dialog.state == "closed":
+        reopen_event_payload = {
+            "previous_closed_at": dialog.closed_at.isoformat() if dialog.closed_at else None,
+            "previous_close_reason": dialog.close_reason,
+            "previous_closed_by": dialog.closed_by,
+            "reopen_count": dialog.reopen_count + 1,
+        }
         dialog.state = "active"
         dialog.reopen_count += 1
+        dialog.version += 1
+        dialog.last_activity_at = now
         dialog.closed_at = None
         dialog.close_reason = None
         dialog.closed_by = None
 
-    dialog.last_activity_at = now
     lease = await acquire_session_lease(
         db,
         project_id=project_id,
@@ -148,6 +185,27 @@ async def open_or_resume_session(
     )
     if lease is None:
         return None
+
+    if created:
+        _record_domain_event(
+            db,
+            project_id=dialog.project_id,
+            session_id=dialog.id,
+            event_type="dialog.session_opened",
+            correlation_id=correlation_id,
+            payload={"release_id": dialog.release_id},
+            occurred_at=now,
+        )
+    elif reopen_event_payload is not None:
+        _record_domain_event(
+            db,
+            project_id=dialog.project_id,
+            session_id=dialog.id,
+            event_type="dialog.session_reopened",
+            correlation_id=correlation_id,
+            payload=reopen_event_payload,
+            occurred_at=now,
+        )
 
     await db.flush()
     return SessionContext(
@@ -164,6 +222,7 @@ async def close_session(
     lease: SessionLease,
     reason: str,
     closed_by: str,
+    correlation_id: str | None = None,
 ) -> None:
     """Close a session only while the caller still owns its current lease."""
     if reason not in {"max_chat_closed", "idle_ttl", "manual"}:
@@ -187,12 +246,28 @@ async def close_session(
     if dialog.state == "closed":
         return
 
+    closed_at = datetime.now(UTC)
     dialog.state = "closed"
-    dialog.closed_at = datetime.now(UTC)
+    dialog.closed_at = closed_at
     dialog.close_reason = reason
     dialog.closed_by = closed_by
     dialog.lease_owner = None
     dialog.lease_until = None
+    dialog.version += 1
+    _record_domain_event(
+        db,
+        project_id=dialog.project_id,
+        session_id=dialog.id,
+        event_type="dialog.session_closed",
+        correlation_id=correlation_id,
+        payload={
+            "closed_at": closed_at.isoformat(),
+            "close_reason": reason,
+            "closed_by": closed_by,
+        },
+        occurred_at=closed_at,
+    )
+    await db.flush()
 
 
 async def commit_turn(
@@ -202,6 +277,7 @@ async def commit_turn(
     inbound: MessageInput | None,
     outbound: tuple[MessageInput, ...],
     outbox: tuple[OutboundIntent, ...],
+    correlation_id: str | None = None,
 ) -> TurnResult:
     """Atomically persist one turn, its delivery intents, and durable delivery jobs."""
     if not db.in_transaction():
@@ -229,6 +305,7 @@ async def commit_turn(
             "id": str(uuid4()),
             "project_id": dialog.project_id,
             "session_id": dialog.id,
+            "channel_id": dialog.channel_id,
             "role": inbound.role,
             "content": inbound.content,
             "external_message_id": inbound.external_message_id,
@@ -243,7 +320,8 @@ async def commit_turn(
         if inserted_id is None:
             existing = await db.scalar(
                 select(ChatMessage).where(
-                    ChatMessage.session_id == dialog.id,
+                    ChatMessage.project_id == dialog.project_id,
+                    ChatMessage.channel_id == dialog.channel_id,
                     ChatMessage.external_message_id == inbound.external_message_id,
                 )
             )
@@ -259,6 +337,7 @@ async def commit_turn(
             id=str(uuid4()),
             project_id=dialog.project_id,
             session_id=dialog.id,
+            channel_id=dialog.channel_id,
             role=message_input.role,
             content=message_input.content,
             external_message_id=message_input.external_message_id,
@@ -279,9 +358,27 @@ async def commit_turn(
         )
         outbox_ids.append(outbox_message.id)
 
-    dialog.last_activity_at = datetime.now(UTC)
+    committed_at = datetime.now(UTC)
+    dialog.last_activity_at = committed_at
+    dialog.version += 1
     dialog.lease_owner = None
     dialog.lease_until = None
+    _record_domain_event(
+        db,
+        project_id=dialog.project_id,
+        session_id=dialog.id,
+        event_type="dialog.turn_committed",
+        correlation_id=(
+            correlation_id or (outbox[0].correlation_id if outbox else None)
+        ),
+        payload={
+            "sequence": dialog.version,
+            "inbound_message_id": inbound_message.id if inbound_message else None,
+            "outbound_message_ids": [message.id for message in out_messages],
+            "outbox_ids": outbox_ids,
+        },
+        occurred_at=committed_at,
+    )
     await db.flush()
     return TurnResult(
         inbound_message=inbound_message,

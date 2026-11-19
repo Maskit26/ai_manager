@@ -92,7 +92,7 @@ def test_accounts_projects_postgresql_migrations() -> None:
                 await connection.run_sync(upgrade)
                 assert await connection.scalar(text("SELECT count(*) FROM alembic_version")) == 1
                 assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                    "20261119_agent_releases"
+                    "20261119_dialog_transactions"
                 )
 
                 project = {
@@ -184,6 +184,7 @@ def test_accounts_projects_postgresql_migrations() -> None:
                         "id": "message-1",
                         "project_id": "project-1",
                         "session_id": "session-1",
+                        "channel_id": "channel-1",
                         "role": "user",
                         "content": {"text": "test"},
                         "delivery_status": "received",
@@ -206,6 +207,7 @@ def test_accounts_projects_postgresql_migrations() -> None:
                             "id": "message-cross-project",
                             "project_id": "project-2",
                             "session_id": "session-1",
+                            "channel_id": "project-1-only-channel",
                             "role": "user",
                             "content": {"text": "test"},
                             "delivery_status": "received",
@@ -359,24 +361,38 @@ def test_accounts_projects_postgresql_migrations() -> None:
 def test_agent_release_lifecycle_postgresql() -> None:
     import asyncio
     import os
+    from datetime import UTC, datetime, timedelta
     from uuid import uuid4
 
     import pytest
     from alembic import command
     from pydantic import ValidationError
-    from sqlalchemy import select, text, update
+    from sqlalchemy import func, select, text, update
     from sqlalchemy.exc import DBAPIError
     from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
     from ai_seller_core.core.config import Settings
-    from ai_seller_core.dialog.session_service import open_or_resume_session
+    from ai_seller_core.dialog.session_service import (
+        MessageInput,
+        OutboundIntent,
+        close_session,
+        commit_turn,
+        open_or_resume_session,
+    )
     from ai_seller_core.persistence.agent_releases import (
         create_agent,
         publish_agent_release,
         rollback_agent_release,
         save_agent_draft,
     )
-    from ai_seller_core.persistence.models import AgentRelease, DialogSession
+    from ai_seller_core.persistence.models import (
+        AgentRelease,
+        ChatMessage,
+        DialogSession,
+        DomainEvent,
+        OutboxMessage,
+    )
+    from ai_seller_core.persistence.session_lease import acquire_session_lease
 
     test_database_url = os.environ.pop("DATABASE_URL", None)
     try:
@@ -551,6 +567,250 @@ def test_agent_release_lifecycle_postgresql() -> None:
                         select(DialogSession.release_id).where(DialogSession.id == session_id)
                     )
                     assert existing_release_id == pinned_release_id
+
+            async with AsyncSession(engine) as db:
+                async with db.begin():
+                    await db.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+                    initial_context = await open_or_resume_session(
+                        db,
+                        project_id="agent-test-project",
+                        channel_id="agent-test-channel",
+                        customer_id="fence-test-customer",
+                        external_chat_id="fence-test-chat",
+                        worker_id="fence-worker-a",
+                        lease_seconds=60,
+                        correlation_id="fence-session-opened",
+                    )
+                    assert initial_context is not None
+                    await commit_turn(
+                        db,
+                        lease=initial_context.lease,
+                        inbound=MessageInput(
+                            role="user",
+                            content={"text": "first turn"},
+                            external_message_id="fence-message-1",
+                        ),
+                        outbound=(
+                            MessageInput(role="assistant", content={"text": "first reply"}),
+                        ),
+                        outbox=(
+                            OutboundIntent(
+                                payload={"text": "first reply"},
+                                idempotency_key="fence-outbox-1",
+                                correlation_id="fence-turn-1",
+                            ),
+                        ),
+                        correlation_id="fence-turn-1",
+                    )
+                    stale_session_id = initial_context.session_id
+                    stale_lease = initial_context.lease
+
+            async with AsyncSession(engine) as db:
+                async with db.begin():
+                    await db.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+                    await db.execute(
+                        update(DialogSession)
+                        .where(DialogSession.id == stale_session_id)
+                        .values(lease_until=datetime.now(UTC) - timedelta(seconds=1))
+                    )
+                    current_lease = await acquire_session_lease(
+                        db,
+                        project_id="agent-test-project",
+                        session_id=stale_session_id,
+                        owner="fence-worker-b",
+                        lease_seconds=60,
+                    )
+                    assert current_lease is not None
+                    assert current_lease.fence == stale_lease.fence + 1
+
+            async def session_counts(db: AsyncSession) -> tuple[int, int, int]:
+                return (
+                    await db.scalar(
+                        select(func.count())
+                        .select_from(ChatMessage)
+                        .where(ChatMessage.session_id == stale_session_id)
+                    ),
+                    await db.scalar(
+                        select(func.count())
+                        .select_from(OutboxMessage)
+                        .where(OutboxMessage.session_id == stale_session_id)
+                    ),
+                    await db.scalar(
+                        select(func.count())
+                        .select_from(DomainEvent)
+                        .where(DomainEvent.session_id == stale_session_id)
+                    ),
+                )
+
+            async with AsyncSession(engine) as db:
+                async with db.begin():
+                    await db.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+                    counts_before_stale_commit = await session_counts(db)
+
+            with pytest.raises(RuntimeError, match="fenced"):
+                async with AsyncSession(engine) as db:
+                    async with db.begin():
+                        await db.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+                        await db.execute(
+                            update(DialogSession)
+                            .where(DialogSession.id == stale_session_id)
+                            .values(variables={"must_rollback": True})
+                        )
+                        await commit_turn(
+                            db,
+                            lease=stale_lease,
+                            inbound=MessageInput(
+                                role="user",
+                                content={"text": "stale turn"},
+                                external_message_id="fence-message-stale",
+                            ),
+                            outbound=(
+                                MessageInput(
+                                    role="assistant",
+                                    content={"text": "must not be saved"},
+                                ),
+                            ),
+                            outbox=(
+                                OutboundIntent(
+                                    payload={"text": "must not be sent"},
+                                    idempotency_key="fence-outbox-stale",
+                                    correlation_id="fence-turn-stale",
+                                ),
+                            ),
+                            correlation_id="fence-turn-stale",
+                        )
+
+            async with AsyncSession(engine) as db:
+                async with db.begin():
+                    await db.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+                    counts_after_stale_commit = await session_counts(db)
+                    stale_dialog = await db.get(DialogSession, stale_session_id)
+                    assert counts_after_stale_commit == counts_before_stale_commit
+                    assert stale_dialog is not None
+                    assert stale_dialog.variables == {}
+                    assert stale_dialog.version == 1
+                    assert stale_dialog.lease_owner == "fence-worker-b"
+                    assert stale_dialog.lease_fence == current_lease.fence
+
+            async with AsyncSession(engine) as db:
+                async with db.begin():
+                    await db.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+                    await close_session(
+                        db,
+                        lease=current_lease,
+                        reason="manual",
+                        closed_by="fence-test",
+                        correlation_id="fence-session-closed",
+                    )
+
+            async with AsyncSession(engine) as db:
+                async with db.begin():
+                    await db.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+                    reopened_context = await open_or_resume_session(
+                        db,
+                        project_id="agent-test-project",
+                        channel_id="agent-test-channel",
+                        customer_id="fence-test-customer",
+                        external_chat_id="fence-test-chat",
+                        worker_id="fence-worker-c",
+                        lease_seconds=60,
+                        correlation_id="fence-session-reopened",
+                    )
+                    assert reopened_context is not None
+                    assert reopened_context.session_id == stale_session_id
+                    assert reopened_context.release_id == initial_context.release_id
+                    await commit_turn(
+                        db,
+                        lease=reopened_context.lease,
+                        inbound=MessageInput(
+                            role="user",
+                            content={"text": "after reopen"},
+                            external_message_id="fence-message-2",
+                        ),
+                        outbound=(
+                            MessageInput(
+                                role="assistant",
+                                content={"text": "second reply"},
+                            ),
+                        ),
+                        outbox=(
+                            OutboundIntent(
+                                payload={"text": "second reply"},
+                                idempotency_key="fence-outbox-2",
+                                correlation_id="fence-turn-2",
+                            ),
+                        ),
+                        correlation_id="fence-turn-2",
+                    )
+
+            async with AsyncSession(engine) as db:
+                async with db.begin():
+                    await db.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+                    counts_before_duplicate = await session_counts(db)
+                    dialog = await db.get(DialogSession, stale_session_id)
+                    assert dialog is not None
+                    assert dialog.state == "active"
+                    assert dialog.release_id == initial_context.release_id
+                    assert dialog.reopen_count == 1
+                    assert dialog.version == 4
+                    assert counts_before_duplicate == (4, 2, 5)
+                    reopened_event = await db.scalar(
+                        select(DomainEvent).where(
+                            DomainEvent.session_id == stale_session_id,
+                            DomainEvent.event_type == "dialog.session_reopened",
+                        )
+                    )
+                    assert reopened_event is not None
+                    assert reopened_event.payload["previous_close_reason"] == "manual"
+                    assert reopened_event.payload["previous_closed_by"] == "fence-test"
+
+            async with AsyncSession(engine) as db:
+                async with db.begin():
+                    await db.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+                    duplicate_context = await open_or_resume_session(
+                        db,
+                        project_id="agent-test-project",
+                        channel_id="agent-test-channel",
+                        customer_id="fence-test-customer",
+                        external_chat_id="fence-test-chat",
+                        worker_id="fence-worker-d",
+                        lease_seconds=60,
+                        correlation_id="fence-duplicate",
+                    )
+                    assert duplicate_context is not None
+                    duplicate_result = await commit_turn(
+                        db,
+                        lease=duplicate_context.lease,
+                        inbound=MessageInput(
+                            role="user",
+                            content={"text": "after reopen"},
+                            external_message_id="fence-message-2",
+                        ),
+                        outbound=(
+                            MessageInput(
+                                role="assistant",
+                                content={"text": "duplicate response"},
+                            ),
+                        ),
+                        outbox=(
+                            OutboundIntent(
+                                payload={"text": "duplicate response"},
+                                idempotency_key="fence-outbox-duplicate",
+                                correlation_id="fence-turn-duplicate",
+                            ),
+                        ),
+                        correlation_id="fence-turn-duplicate",
+                    )
+                    assert duplicate_result.duplicate
+
+            async with AsyncSession(engine) as db:
+                async with db.begin():
+                    await db.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+                    assert await session_counts(db) == counts_before_duplicate
+                    dialog = await db.get(DialogSession, stale_session_id)
+                    assert dialog is not None
+                    assert dialog.reopen_count == 1
+                    assert dialog.version == 4
         finally:
             try:
                 if schema_created:
