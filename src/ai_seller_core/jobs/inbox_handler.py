@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from sqlalchemy import select
@@ -91,6 +92,8 @@ def build_inbound_event_handler(
             if sanitized_text is None:
                 event.normalized_event = {}
                 event.status = "failed"
+                event.last_error = "message_sanitization_failed"
+                event.processed_at = datetime.now(UTC)
                 return
             event.normalized_event = {
                 **event.normalized_event,
@@ -100,6 +103,8 @@ def build_inbound_event_handler(
 
 
             event.status = "processing"
+            event.processed_at = None
+            event.last_error = None
             context: SessionContext | None = await open_or_resume_session(
                 db,
                 project_id=command.project_id,
@@ -167,6 +172,7 @@ def build_inbound_event_handler(
                 correlation_id=event.correlation_id,
             )
             event.status = "processed"
+            event.processed_at = datetime.now(UTC)
 
     return process
 

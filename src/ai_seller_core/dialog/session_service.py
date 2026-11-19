@@ -355,6 +355,7 @@ async def commit_turn(
             idempotency_key=intent.idempotency_key,
             correlation_id=intent.correlation_id,
             deadline_at=intent.deadline_at,
+            lease=lease,
         )
         outbox_ids.append(outbox_message.id)
 

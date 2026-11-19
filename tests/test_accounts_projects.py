@@ -92,7 +92,7 @@ def test_accounts_projects_postgresql_migrations() -> None:
                 await connection.run_sync(upgrade)
                 assert await connection.scalar(text("SELECT count(*) FROM alembic_version")) == 1
                 assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                    "20261119_dialog_transactions"
+                    "20261122_activity_retention"
                 )
 
                 project = {

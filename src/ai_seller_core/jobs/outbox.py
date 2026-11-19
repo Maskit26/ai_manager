@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_seller_core.jobs.repository import enqueue_job
 from ai_seller_core.persistence.models import OutboxMessage
+from ai_seller_core.persistence.session_lease import SessionLease, assert_current_fence
 
 
 async def enqueue_outbound_message(
@@ -17,12 +18,18 @@ async def enqueue_outbound_message(
     idempotency_key: str,
     correlation_id: str,
     deadline_at: datetime | None = None,
+    message_kind: str = "outbound_message",
+    lease: SessionLease,
 ) -> OutboxMessage:
     """Write delivery intent and its durable job in the caller's transaction."""
+    await assert_current_fence(session, lease=lease)
     message = OutboxMessage(
         project_id=project_id,
         channel_id=channel_id,
         session_id=session_id,
+        kind=message_kind,
+        destination=channel_id,
+        aggregate_id=session_id,
         payload=payload,
         idempotency_key=idempotency_key,
         deadline_at=deadline_at,

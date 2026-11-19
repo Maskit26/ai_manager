@@ -33,9 +33,10 @@ async def ingest_channel_event(
             provider_event_id=provider_event_id,
             event_type=event_type,
             normalized_event=normalized_event,
+            status="queued",
             correlation_id=correlation_id,
         )
-        .on_conflict_do_nothing(constraint="uq_inbox_provider_event")
+        .on_conflict_do_nothing(constraint="uq_inbox_project_channel_event")
         .returning(InboxEvent.id)
     )
     event_id = await session.scalar(statement)

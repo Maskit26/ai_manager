@@ -18,7 +18,57 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from ai_seller_core.persistence.application_models import (
+    AuditLog as AuditLog,
+)
+from ai_seller_core.persistence.application_models import (
+    Escalation as Escalation,
+)
+from ai_seller_core.persistence.application_models import (
+    Lead as Lead,
+)
+from ai_seller_core.persistence.application_models import (
+    LeadItem as LeadItem,
+)
+from ai_seller_core.persistence.application_models import (
+    LlmCall as LlmCall,
+)
+from ai_seller_core.persistence.application_models import (
+    ToolExecution as ToolExecution,
+)
+from ai_seller_core.persistence.application_models import (
+    UsageCounter as UsageCounter,
+)
 from ai_seller_core.persistence.base import Base
+from ai_seller_core.persistence.catalog_models import (
+    CatalogImport as CatalogImport,
+)
+from ai_seller_core.persistence.catalog_models import (
+    CatalogImportError as CatalogImportError,
+)
+from ai_seller_core.persistence.catalog_models import (
+    CatalogSource as CatalogSource,
+)
+from ai_seller_core.persistence.catalog_models import (
+    Customer as Customer,
+)
+from ai_seller_core.persistence.catalog_models import (
+    CustomerIdentity as CustomerIdentity,
+)
+from ai_seller_core.persistence.catalog_models import (
+    KbChunk as KbChunk,
+)
+from ai_seller_core.persistence.catalog_models import (
+    KbDocument as KbDocument,
+)
+from ai_seller_core.persistence.catalog_models import (
+    Product as Product,
+)
+from ai_seller_core.persistence.safe_json import (
+    PrivacyRedactedJSONB,
+    RedactedJSONB,
+    RedactedText,
+)
 
 
 def new_id() -> str:
@@ -172,6 +222,12 @@ class BackgroundJob(Base):
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_background_jobs_idempotency"),
         Index("ix_background_jobs_claim", "queue", "status", "available_at"),
+        Index(
+            "ix_background_jobs_status_available_priority",
+            "status",
+            "available_at",
+            "priority",
+        ),
         Index("ix_background_jobs_project", "project_id"),
     )
 
@@ -182,17 +238,18 @@ class BackgroundJob(Base):
     queue: Mapped[str] = mapped_column(String(40), nullable=False)
     kind: Mapped[str] = mapped_column(String(80), nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
-    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(RedactedJSONB(), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
     correlation_id: Mapped[str] = mapped_column(String(100), nullable=False)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=8)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     available_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     lease_owner: Mapped[str | None] = mapped_column(String(100))
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    last_error: Mapped[str | None] = mapped_column(Text)
+    last_error: Mapped[str | None] = mapped_column(RedactedText())
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -225,12 +282,14 @@ class InboxEvent(Base):
     channel_id: Mapped[str] = mapped_column(String(100), nullable=False)
     provider_event_id: Mapped[str] = mapped_column(String(200), nullable=False)
     event_type: Mapped[str] = mapped_column(String(80), nullable=False)
-    normalized_event: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    normalized_event: Mapped[dict[str, Any]] = mapped_column(RedactedJSONB(), nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="received")
     correlation_id: Mapped[str] = mapped_column(String(100), nullable=False)
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(RedactedText())
 
 
 class OutboxMessage(Base):
@@ -256,8 +315,13 @@ class OutboxMessage(Base):
     project_id: Mapped[str] = mapped_column(String(100), nullable=False)
     channel_id: Mapped[str] = mapped_column(String(100), nullable=False)
     session_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    kind: Mapped[str] = mapped_column(
+        String(80), nullable=False, default="outbound_message", server_default="outbound_message"
+    )
+    destination: Mapped[str] = mapped_column(String(200), nullable=False)
+    aggregate_id: Mapped[str] = mapped_column(String(100), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
-    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(RedactedJSONB(), nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     available_at: Mapped[datetime] = mapped_column(
@@ -265,7 +329,8 @@ class OutboxMessage(Base):
     )
     deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     remote_message_id: Mapped[str | None] = mapped_column(String(200))
-    last_error: Mapped[str | None] = mapped_column(Text)
+    last_error: Mapped[str | None] = mapped_column(RedactedText())
+    delivery_reason: Mapped[str | None] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -386,6 +451,13 @@ class DomainEvent(Base):
             "aggregate_id",
             "occurred_at",
         ),
+        Index(
+            "ix_domain_events_project_time_type",
+            "project_id",
+            "occurred_at",
+            "event_type",
+        ),
+        Index("ix_domain_events_occurred_at", "occurred_at"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -402,7 +474,9 @@ class DomainEvent(Base):
         Integer, nullable=False, default=1, server_default="1"
     )
     correlation_id: Mapped[str] = mapped_column(String(200), nullable=False)
-    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    payload: Mapped[dict[str, Any]] = mapped_column(
+        PrivacyRedactedJSONB(), nullable=False, default=dict
+    )
 
 
 class ChatMessage(Base):
@@ -425,6 +499,12 @@ class ChatMessage(Base):
             "external_message_id",
             name="uq_chat_messages_external",
         ),
+        UniqueConstraint(
+            "project_id",
+            "session_id",
+            "id",
+            name="uq_chat_messages_project_session_id",
+        ),
         ForeignKeyConstraint(
             ["project_id", "session_id", "channel_id"],
             ["dialog_sessions.project_id", "dialog_sessions.id", "dialog_sessions.channel_id"],
@@ -443,4 +523,6 @@ class ChatMessage(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
 

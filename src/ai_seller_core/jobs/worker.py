@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_seller_core.core.config import Settings, get_settings
@@ -13,9 +14,12 @@ from ai_seller_core.jobs.repository import claim_job
 from ai_seller_core.jobs.retry import retry_delay_seconds
 from ai_seller_core.persistence.base import SessionFactory
 from ai_seller_core.persistence.models import BackgroundJob
+from ai_seller_core.persistence.retention import purge_expired_activity
 
 logger = logging.getLogger(__name__)
 JobHandler = Callable[[dict[str, Any]], Awaitable[None]]
+RETENTION_CLEANUP_INTERVAL_SECONDS = timedelta(days=1).total_seconds()
+RETENTION_RETRY_INTERVAL_SECONDS = 300.0
 
 
 class Worker:
@@ -45,16 +49,58 @@ class Worker:
                     "Worker has no registered job handlers and will remain idle",
                     extra={"queue": self.queue, "worker_id": self.worker_id},
                 )
-                await stop_event.wait()
-                return
 
+            loop = asyncio.get_running_loop()
+            next_retention_cleanup = loop.time()
             while not stop_event.is_set():
+                if loop.time() >= next_retention_cleanup:
+                    try:
+                        events_deleted, audit_entries_deleted = (
+                            await self._run_retention_cleanup()
+                        )
+                    except SQLAlchemyError:
+                        logger.exception(
+                            "Activity retention cleanup failed",
+                            extra={"queue": self.queue, "worker_id": self.worker_id},
+                        )
+                        next_retention_cleanup = (
+                            loop.time() + RETENTION_RETRY_INTERVAL_SECONDS
+                        )
+                    else:
+                        logger.info(
+                            "Activity retention cleanup completed",
+                            extra={
+                                "queue": self.queue,
+                                "worker_id": self.worker_id,
+                                "domain_events_deleted": events_deleted,
+                                "audit_entries_deleted": audit_entries_deleted,
+                            },
+                        )
+                        next_retention_cleanup = (
+                            loop.time() + RETENTION_CLEANUP_INTERVAL_SECONDS
+                        )
+
+                if not self.handlers:
+                    timeout = min(
+                        self.settings.job_poll_interval_seconds,
+                        max(0.0, next_retention_cleanup - loop.time()),
+                    )
+                    try:
+                        await asyncio.wait_for(stop_event.wait(), timeout=timeout)
+                    except TimeoutError:
+                        continue
+                    break
+
                 job = await self._claim()
                 if job is None:
+                    timeout = min(
+                        self.settings.job_poll_interval_seconds,
+                        max(0.0, next_retention_cleanup - loop.time()),
+                    )
                     try:
                         await asyncio.wait_for(
                             stop_event.wait(),
-                            timeout=self.settings.job_poll_interval_seconds,
+                            timeout=timeout,
                         )
                     except TimeoutError:
                         continue
@@ -65,6 +111,10 @@ class Worker:
                 "Worker stopped",
                 extra={"queue": self.queue, "worker_id": self.worker_id},
             )
+
+    async def _run_retention_cleanup(self) -> tuple[int, int]:
+        async with self.session_factory() as session, session.begin():
+            return await purge_expired_activity(session)
 
     async def _claim(self) -> BackgroundJob | None:
         async with self.session_factory() as session, session.begin():

@@ -20,6 +20,8 @@ def test_worker_with_empty_registry_waits_for_shutdown(monkeypatch) -> None:
         handlers={},
         settings=Settings(_env_file=None, database_url=DATABASE_URL),
     )
+    retention_cleanup = AsyncMock(return_value=(0, 0))
+    monkeypatch.setattr(worker, "_run_retention_cleanup", retention_cleanup)
     claim = AsyncMock(side_effect=AssertionError("empty registry must not claim jobs"))
     monkeypatch.setattr(worker, "_claim", claim)
 
@@ -32,6 +34,7 @@ def test_worker_with_empty_registry_waits_for_shutdown(monkeypatch) -> None:
         await asyncio.wait_for(task, timeout=1)
 
     asyncio.run(run_worker())
+    retention_cleanup.assert_awaited_once()
     claim.assert_not_awaited()
 
 

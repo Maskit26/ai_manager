@@ -25,7 +25,11 @@ async def claim_job(
                 (BackgroundJob.status == "processing") & (BackgroundJob.lease_until < now),
             ),
         )
-        .order_by(BackgroundJob.available_at, BackgroundJob.created_at)
+        .order_by(
+            BackgroundJob.available_at,
+            BackgroundJob.priority.desc(),
+            BackgroundJob.created_at,
+        )
         .limit(1)
         .with_for_update(skip_locked=True)
     )
@@ -50,6 +54,7 @@ async def enqueue_job(
     payload: dict[str, Any],
     idempotency_key: str,
     correlation_id: str,
+    priority: int = 0,
 ) -> BackgroundJob:
     if "project_id" in payload and payload["project_id"] != project_id:
         raise ValueError("Job payload project_id must match the job project_id")
@@ -60,6 +65,7 @@ async def enqueue_job(
         payload={**payload, "project_id": project_id},
         idempotency_key=idempotency_key,
         correlation_id=correlation_id,
+        priority=priority,
     )
     session.add(job)
     await session.flush()
