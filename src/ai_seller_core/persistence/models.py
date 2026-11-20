@@ -34,6 +34,9 @@ from ai_seller_core.persistence.application_models import (
     LlmCall as LlmCall,
 )
 from ai_seller_core.persistence.application_models import (
+    ProjectDeletionRequest as ProjectDeletionRequest,
+)
+from ai_seller_core.persistence.application_models import (
     ToolExecution as ToolExecution,
 )
 from ai_seller_core.persistence.application_models import (

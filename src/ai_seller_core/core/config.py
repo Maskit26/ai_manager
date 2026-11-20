@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     database_url: SecretStr
     qdrant_url: AnyHttpUrl | None = None
     qdrant_api_key: SecretStr | None = None
+    qdrant_collection_name: str = Field(default="ai_seller_vectors", min_length=1)
     secret_encryption_key: SecretStr | None = None
     api_host: str = "127.0.0.1"
     api_port: int = Field(default=8000, ge=1, le=65535)
