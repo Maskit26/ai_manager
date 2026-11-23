@@ -12,7 +12,7 @@ from alembic.config import Config
 from pydantic import ValidationError
 from sqlalchemy import delete, func, insert, select, text, update
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from ai_seller_core.core.config import Settings
 from ai_seller_core.persistence.application_models import UsageCounter
@@ -20,13 +20,25 @@ from ai_seller_core.persistence.billing_models import (
     DancoinBalance,
     DancoinReservation,
     LlmModel,
+    Subscription,
+    TariffPlan,
     UsageRecord,
 )
 from ai_seller_core.persistence.billing_service import (
     IdempotencyConflictError,
+    InsufficientDancoinError,
     grant_dancoin,
     reserve_dancoin,
     timeout_reservation,
+)
+from ai_seller_core.persistence.entitlements_service import (
+    EntitlementAccessError,
+    check_access,
+)
+from ai_seller_core.persistence.llm_handoff_service import (
+    LLMProviderCallError,
+    LLMProviderResult,
+    run_llm_handoff,
 )
 from ai_seller_core.persistence.models import Account, Project
 from ai_seller_core.persistence.usage_service import (
@@ -118,8 +130,11 @@ def test_usage_record_counter_and_settlement_postgresql() -> None:
         engine = None
         account_id = str(uuid4())
         project_id = str(uuid4())
+        plan_id = str(uuid4())
+        subscription_id = str(uuid4())
         period_start = datetime(2026, 11, 1, tzinfo=UTC)
         period_end = datetime(2026, 12, 1, tzinfo=UTC)
+        now = datetime.now(UTC)
 
         async def in_transaction(operation):
             async with AsyncSession(engine, expire_on_commit=False) as db:
@@ -172,6 +187,7 @@ def test_usage_record_counter_and_settlement_postgresql() -> None:
                 max_overflow=0,
                 connect_args={"server_settings": {"search_path": schema}},
             )
+            session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
             async with engine.begin() as connection:
 
@@ -198,6 +214,48 @@ def test_usage_record_counter_and_settlement_postgresql() -> None:
                         "timezone": "UTC",
                         "settings": {},
                         "status": "active",
+                    },
+                )
+                await connection.execute(
+                    insert(TariffPlan),
+                    {
+                        "id": plan_id,
+                        "code": f"usage-test-{plan_id}",
+                        "version": 1,
+                        "name": "Usage test",
+                        "is_active": True,
+                        "included_agents": 1,
+                        "max_agents": 1,
+                        "features": {
+                            "llm_calls_enabled": True,
+                            "catalog_import_enabled": True,
+                            "knowledge_base_enabled": False,
+                            "multi_channel_enabled": False,
+                        },
+                        "limits": {},
+                    },
+                )
+                await connection.execute(
+                    insert(Subscription),
+                    {
+                        "id": subscription_id,
+                        "account_id": account_id,
+                        "tariff_plan_id": plan_id,
+                        "status": "active",
+                        "current_period_start": now - timedelta(days=1),
+                        "current_period_end": now + timedelta(days=30),
+                        "snapshot": {
+                            "schema_version": 1,
+                            "features": {
+                                "llm_calls_enabled": True,
+                                "catalog_import_enabled": True,
+                                "knowledge_base_enabled": False,
+                                "multi_channel_enabled": False,
+                            },
+                            "limits": {},
+                            "included_agents": 1,
+                            "max_agents": 1,
+                        },
                     },
                 )
                 await connection.execute(
@@ -395,6 +453,153 @@ def test_usage_record_counter_and_settlement_postgresql() -> None:
                         delete(UsageRecord).where(UsageRecord.id == usage_record_id)
                     )
                 )
+
+            provider_calls = 0
+            reserved_before_handoff = await read_one(
+                select(DancoinBalance).where(DancoinBalance.account_id == account_id)
+            )
+
+            async def fake_provider_call() -> LLMProviderResult[str]:
+                nonlocal provider_calls
+                provider_calls += 1
+                reserved = await read_one(
+                    select(DancoinReservation).where(
+                        DancoinReservation.operation_id == successful_operation_id
+                    )
+                )
+                assert reserved.status == "reserved"
+                return LLMProviderResult(
+                    response="fake response",
+                    input_tokens=100,
+                    output_tokens=10,
+                )
+
+            successful_operation_id = f"handoff-success-{uuid4()}"
+            handoff = await run_llm_handoff(
+                session_factory,
+                provider_call=fake_provider_call,
+                account_id=account_id,
+                project_id=project_id,
+                operation_id=successful_operation_id,
+                maximum_cost=Decimal("1.00"),
+                model_id="test-provider/model",
+                price_version=1,
+                period_start=period_start,
+                period_end=period_end,
+            )
+            assert provider_calls == 1
+            assert handoff.response == "fake response"
+            assert handoff.usage_record.dancoin_cost == Decimal("0.11")
+            assert handoff.settlement is not None
+            assert handoff.settlement.type == "settle"
+            settled_reservation = await read_one(
+                select(DancoinReservation).where(
+                    DancoinReservation.operation_id == successful_operation_id
+                )
+            )
+            assert settled_reservation.status == "settled"
+            assert settled_reservation.amount == Decimal("1.00")
+            settled_balance = await read_one(
+                select(DancoinBalance).where(DancoinBalance.account_id == account_id)
+            )
+            assert settled_balance.reserved_grant == reserved_before_handoff.reserved_grant
+            assert settled_balance.reserved_purchased == reserved_before_handoff.reserved_purchased
+
+            async def unexpected_provider_call() -> LLMProviderResult[str]:
+                nonlocal provider_calls
+                provider_calls += 1
+                raise AssertionError("provider must not run without sufficient balance")
+
+            with pytest.raises(InsufficientDancoinError):
+                await run_llm_handoff(
+                    session_factory,
+                    provider_call=unexpected_provider_call,
+                    account_id=account_id,
+                    project_id=project_id,
+                    operation_id=f"handoff-insufficient-{uuid4()}",
+                    maximum_cost=Decimal("1000.00"),
+                    model_id="test-provider/model",
+                    price_version=1,
+                    period_start=period_start,
+                    period_end=period_end,
+                )
+            assert provider_calls == 1
+
+            failed_operation_id = f"handoff-provider-failure-{uuid4()}"
+
+            async def failing_provider_call() -> LLMProviderResult[str]:
+                raise LLMProviderCallError("fake provider failure")
+
+            with pytest.raises(LLMProviderCallError):
+                await run_llm_handoff(
+                    session_factory,
+                    provider_call=failing_provider_call,
+                    account_id=account_id,
+                    project_id=project_id,
+                    operation_id=failed_operation_id,
+                    maximum_cost=Decimal("1.00"),
+                    model_id="test-provider/model",
+                    price_version=1,
+                    period_start=period_start,
+                    period_end=period_end,
+                )
+            released_reservation = await read_one(
+                select(DancoinReservation).where(
+                    DancoinReservation.operation_id == failed_operation_id
+                )
+            )
+            assert released_reservation.status == "released"
+
+            initial_entitlements = await in_transaction(
+                lambda db: check_access(
+                    db,
+                    account_id=account_id,
+                    action="llm_call",
+                    project_id=project_id,
+                )
+            )
+            concurrent_maximum = initial_entitlements.available_dancoin
+            concurrent_calls = [0, 0]
+
+            def concurrent_provider_call(index: int):
+                async def call() -> LLMProviderResult[str]:
+                    concurrent_calls[index] += 1
+                    return LLMProviderResult(
+                        response=f"fake concurrent response {index}",
+                        input_tokens=100,
+                        output_tokens=10,
+                    )
+
+                return call
+
+            async def concurrent_handoff(index: int):
+                return await run_llm_handoff(
+                    session_factory,
+                    provider_call=concurrent_provider_call(index),
+                    account_id=account_id,
+                    project_id=project_id,
+                    operation_id=f"handoff-concurrent-{index}-{uuid4()}",
+                    maximum_cost=concurrent_maximum,
+                    model_id="test-provider/model",
+                    price_version=1,
+                    period_start=period_start,
+                    period_end=period_end,
+                )
+
+            concurrent_results = await asyncio.gather(
+                concurrent_handoff(0),
+                concurrent_handoff(1),
+                return_exceptions=True,
+            )
+            failures = [result for result in concurrent_results if isinstance(result, Exception)]
+            assert len(failures) == 1
+            assert sum(concurrent_calls) == 1
+            assert isinstance(
+                failures[0],
+                (EntitlementAccessError, InsufficientDancoinError),
+            )
+            if isinstance(failures[0], EntitlementAccessError):
+                assert failures[0].code == "insufficient_dancoin"
         finally:
             if engine is not None:
                 await engine.dispose()
