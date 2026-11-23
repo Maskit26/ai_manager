@@ -20,20 +20,6 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from ai_seller_core.persistence.billing_models import (
-    AgentSlot as AgentSlot,
-    DancoinBalance as DancoinBalance,
-    DancoinPackage as DancoinPackage,
-    DancoinReservation as DancoinReservation,
-    DancoinTransaction as DancoinTransaction,
-    Invoice as Invoice,
-    LlmModel as LlmModel,
-    Payment as Payment,
-    PaymentEvent as PaymentEvent,
-    Subscription as Subscription,
-    TariffPlan as TariffPlan,
-    UsageRecord as UsageRecord,
-)
 from ai_seller_core.persistence.application_models import (
     AuditLog as AuditLog,
 )
@@ -59,6 +45,42 @@ from ai_seller_core.persistence.application_models import (
     UsageCounter as UsageCounter,
 )
 from ai_seller_core.persistence.base import Base
+from ai_seller_core.persistence.billing_models import (
+    AgentSlot as AgentSlot,
+)
+from ai_seller_core.persistence.billing_models import (
+    DancoinBalance as DancoinBalance,
+)
+from ai_seller_core.persistence.billing_models import (
+    DancoinPackage as DancoinPackage,
+)
+from ai_seller_core.persistence.billing_models import (
+    DancoinReservation as DancoinReservation,
+)
+from ai_seller_core.persistence.billing_models import (
+    DancoinTransaction as DancoinTransaction,
+)
+from ai_seller_core.persistence.billing_models import (
+    Invoice as Invoice,
+)
+from ai_seller_core.persistence.billing_models import (
+    LlmModel as LlmModel,
+)
+from ai_seller_core.persistence.billing_models import (
+    Payment as Payment,
+)
+from ai_seller_core.persistence.billing_models import (
+    PaymentEvent as PaymentEvent,
+)
+from ai_seller_core.persistence.billing_models import (
+    Subscription as Subscription,
+)
+from ai_seller_core.persistence.billing_models import (
+    TariffPlan as TariffPlan,
+)
+from ai_seller_core.persistence.billing_models import (
+    UsageRecord as UsageRecord,
+)
 from ai_seller_core.persistence.catalog_models import (
     CatalogImport as CatalogImport,
 )
@@ -162,6 +184,10 @@ class AccountEntitlement(Base):
     )
     max_products_per_project: Mapped[int | None] = mapped_column(Integer)
     max_kb_documents_per_project: Mapped[int | None] = mapped_column(Integer)
+    snapshot: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="'{}'::jsonb"
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Project(Base):
@@ -410,8 +436,7 @@ class DialogSession(Base):
         ),
         CheckConstraint("state IN ('active', 'closed')", name="ck_dialog_sessions_state"),
         CheckConstraint(
-            "close_reason IS NULL OR close_reason IN "
-            "('max_chat_closed', 'idle_ttl', 'manual')",
+            "close_reason IS NULL OR close_reason IN ('max_chat_closed', 'idle_ttl', 'manual')",
             name="ck_dialog_sessions_close_reason",
         ),
         CheckConstraint("reopen_count >= 0", name="ck_dialog_sessions_reopen_count"),
@@ -467,9 +492,7 @@ class DialogSession(Base):
     )
     lease_owner: Mapped[str | None] = mapped_column(String(100))
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    lease_fence: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default="0"
-    )
+    lease_fence: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -477,6 +500,7 @@ class DialogSession(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
 
 class DomainEvent(Base):
     __tablename__ = "domain_events"
@@ -585,6 +609,3 @@ class ChatMessage(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-
-
-

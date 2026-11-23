@@ -5,6 +5,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -29,10 +30,13 @@ from ai_seller_core.persistence.billing_models import (
 )
 from ai_seller_core.persistence.models import Account
 from ai_seller_core.persistence.payment_service import (
+    IdempotencyConflictError,
     PaymentProviderRequest,
     ProviderPayment,
     ProviderPaymentEvent,
     ProviderRefund,
+    _assert_invoice_matches,
+    build_tariff_snapshot,
     create_dancoin_package_invoice,
     create_payment,
     create_tariff_invoice,
@@ -40,6 +44,116 @@ from ai_seller_core.persistence.payment_service import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_tariff_snapshot_includes_agent_limits() -> None:
+    tariff_plan = TariffPlan(
+        id="plan-1",
+        code="standard",
+        version=1,
+        name="Standard",
+        included_agents=2,
+        max_agents=5,
+        features={"llm_calls_enabled": True},
+        limits={"max_projects": 3},
+        dancoin_grant_conditions={},
+        billing_options={},
+    )
+    period_start = datetime(2026, 11, 23, tzinfo=UTC)
+    period_end = datetime(2026, 12, 23, tzinfo=UTC)
+
+    snapshot = build_tariff_snapshot(
+        tariff_plan,
+        amount=Decimal("10.00"),
+        currency="USD",
+        period_start=period_start,
+        period_end=period_end,
+    )
+
+    assert snapshot["schema_version"] == 1
+    assert snapshot["included_agents"] == 2
+    assert snapshot["max_agents"] == 5
+
+
+def test_invoice_replay_accepts_legacy_agent_limit_fields_only() -> None:
+    period_start = datetime(2026, 11, 23, tzinfo=UTC)
+    period_end = datetime(2026, 12, 23, tzinfo=UTC)
+    legacy_snapshot = {
+        "schema_version": 1,
+        "purchase_type": "tariff",
+        "price": {"amount": "10.00", "currency": "USD"},
+        "features": {"llm_calls_enabled": True},
+        "limits": {"max_projects": 3},
+    }
+    invoice = SimpleNamespace(
+        purchase_type="tariff",
+        snapshot=legacy_snapshot,
+        currency="USD",
+        total=Decimal("10.00"),
+        period_start=period_start,
+        period_end=period_end,
+    )
+
+    _assert_invoice_matches(
+        invoice,
+        purchase_type="tariff",
+        snapshot={
+            **legacy_snapshot,
+            "included_agents": 2,
+            "max_agents": 5,
+        },
+        currency="USD",
+        total=Decimal("10.00"),
+        period_start=period_start,
+        period_end=period_end,
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "changed_value"),
+    [
+        ("price", {"amount": "11.00", "currency": "USD"}),
+        ("features", {"llm_calls_enabled": False}),
+        ("limits", {"max_projects": 4}),
+    ],
+)
+def test_invoice_replay_rejects_changed_tariff_terms(
+    field: str,
+    changed_value: object,
+) -> None:
+    period_start = datetime(2026, 11, 23, tzinfo=UTC)
+    period_end = datetime(2026, 12, 23, tzinfo=UTC)
+    legacy_snapshot = {
+        "schema_version": 1,
+        "purchase_type": "tariff",
+        "price": {"amount": "10.00", "currency": "USD"},
+        "features": {"llm_calls_enabled": True},
+        "limits": {"max_projects": 3},
+    }
+    invoice = SimpleNamespace(
+        purchase_type="tariff",
+        snapshot=legacy_snapshot,
+        currency="USD",
+        total=Decimal("10.00"),
+        period_start=period_start,
+        period_end=period_end,
+    )
+
+    with pytest.raises(IdempotencyConflictError):
+        _assert_invoice_matches(
+            invoice,
+            purchase_type="tariff",
+            snapshot={
+                **legacy_snapshot,
+                "included_agents": 2,
+                "max_agents": 5,
+                field: changed_value,
+            },
+            currency="USD",
+            total=Decimal("10.00"),
+            period_start=period_start,
+            period_end=period_end,
+        )
 
 
 class InMemoryPaymentProvider:
@@ -193,6 +307,8 @@ def test_payment_workflow_postgresql() -> None:
                         "version": 1,
                         "name": "Standard",
                         "is_active": True,
+                        "included_agents": 2,
+                        "max_agents": 5,
                         "features": {"chat": True},
                         "limits": {"agents": 2},
                         "dancoin_grant_conditions": {},
@@ -305,6 +421,8 @@ def test_payment_workflow_postgresql() -> None:
             assert subscription.status == "active"
             assert subscription.current_period_end == period_end
             assert subscription.snapshot["billing_invoice_id"] == first_invoice.id
+            assert subscription.snapshot["included_agents"] == 2
+            assert subscription.snapshot["max_agents"] == 5
 
             balance = await with_session(lambda db: db.get(DancoinBalance, account_id))
             assert balance is not None

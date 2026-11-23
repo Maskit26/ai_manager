@@ -781,7 +781,7 @@ async def compensate_timeout_charge(
 ) -> DancoinTransaction | None:
     _require_transaction(db)
     operation_id = _reference(operation_id)
-    actual_amount = _amount(actual_amount)
+    actual_amount = _amount(actual_amount, positive=False)
     reservation = await db.scalar(
         select(DancoinReservation).where(DancoinReservation.operation_id == operation_id)
     )

@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
@@ -54,9 +55,7 @@ class ToolExecution(Base):
     message_id: Mapped[str | None] = mapped_column(String(36))
     tool_name: Mapped[str] = mapped_column(String(128), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
-    arguments: Mapped[dict[str, Any]] = mapped_column(
-        RedactedJSONB(), nullable=False, default=dict
-    )
+    arguments: Mapped[dict[str, Any]] = mapped_column(RedactedJSONB(), nullable=False, default=dict)
     result: Mapped[dict[str, Any] | None] = mapped_column(RedactedJSONB())
     error_code: Mapped[str | None] = mapped_column(String(100))
     started_at: Mapped[datetime] = mapped_column(
@@ -69,9 +68,7 @@ class Lead(Base):
     __tablename__ = "leads"
     __table_args__ = (
         UniqueConstraint("project_id", "id", name="uq_leads_project_id"),
-        UniqueConstraint(
-            "project_id", "idempotency_key", name="uq_leads_project_idempotency"
-        ),
+        UniqueConstraint("project_id", "idempotency_key", name="uq_leads_project_idempotency"),
         ForeignKeyConstraint(
             ["project_id", "session_id"],
             ["dialog_sessions.project_id", "dialog_sessions.id"],
@@ -129,9 +126,7 @@ class LeadItem(Base):
     lead_id: Mapped[str] = mapped_column(String(36), nullable=False)
     product_id: Mapped[str | None] = mapped_column(String(36))
     quantity: Mapped[float] = mapped_column(Numeric(12, 3), nullable=False)
-    product_snapshot: Mapped[dict[str, Any]] = mapped_column(
-        RedactedJSONB(), nullable=False
-    )
+    product_snapshot: Mapped[dict[str, Any]] = mapped_column(RedactedJSONB(), nullable=False)
 
 
 class Escalation(Base):
@@ -266,7 +261,7 @@ class UsageCounter(Base):
     project_id: Mapped[str] = mapped_column(String(100), nullable=False)
     period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     metric: Mapped[str] = mapped_column(String(100), nullable=False)
-    value: Mapped[float] = mapped_column(Numeric(20, 6), nullable=False, default=0)
+    value: Mapped[Decimal] = mapped_column(Numeric(20, 6), nullable=False, default=Decimal("0"))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )

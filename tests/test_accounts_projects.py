@@ -2,7 +2,7 @@ import asyncio
 import io
 import os
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
@@ -30,8 +30,8 @@ from ai_seller_core.persistence.models import (
     DancoinReservation,
     DancoinTransaction,
     DialogSession,
-    Invoice,
     InboxEvent,
+    Invoice,
     LlmModel,
     OutboxMessage,
     Payment,
@@ -85,6 +85,10 @@ def test_accounts_projects_offline_migration() -> None:
     assert "uq_dancoin_packages_code_version" in sql
     assert "uq_usage_records_idempotency_key" in sql
     assert "trg_dancoin_transactions_immutable" in sql
+    assert "trg_usage_records_immutable" in sql
+    assert "trg_subscriptions_invalidate_entitlements" in sql
+    assert "trg_dancoin_balances_invalidate_entitlements" in sql
+    assert "trg_agent_slots_invalidate_entitlements" in sql
     assert "ck_entitlements_max_projects_nonnegative" in sql
     assert "ix_projects_account_id" in sql
     assert "fk_dialog_sessions_project_channel" in sql
@@ -130,7 +134,7 @@ def test_accounts_projects_postgresql_migrations() -> None:
                 await connection.run_sync(upgrade)
                 assert await connection.scalar(text("SELECT count(*) FROM alembic_version")) == 1
                 assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                    "20261126_billing_schema"
+                    "20261128_entitlements_engine"
                 )
 
                 project = {
@@ -187,8 +191,8 @@ def test_accounts_projects_postgresql_migrations() -> None:
                         "max_catalog_sources_per_project": None,
                     },
                 )
-                period_start = datetime(2026, 1, 1, tzinfo=timezone.utc)
-                period_end = datetime(2026, 2, 1, tzinfo=timezone.utc)
+                period_start = datetime(2026, 1, 1, tzinfo=UTC)
+                period_end = datetime(2026, 2, 1, tzinfo=UTC)
                 await connection.execute(
                     insert(TariffPlan),
                     {
@@ -306,9 +310,7 @@ def test_accounts_projects_postgresql_migrations() -> None:
                             .values(snapshot={"schema_version": 2})
                         )
 
-                await connection.execute(
-                    insert(DancoinBalance), {"account_id": "account-1"}
-                )
+                await connection.execute(insert(DancoinBalance), {"account_id": "account-1"})
                 await connection.execute(
                     insert(DancoinTransaction),
                     {
@@ -516,9 +518,7 @@ def test_accounts_projects_postgresql_migrations() -> None:
                         AccountEntitlement.multi_channel_enabled,
                         AccountEntitlement.max_projects,
                         AccountEntitlement.max_catalog_sources_per_project,
-                    ).where(
-                        AccountEntitlement.account_id == "account-1"
-                    )
+                    ).where(AccountEntitlement.account_id == "account-1")
                 )
                 entitlement = entitlement.one()
                 assert entitlement.catalog_import_enabled is True
@@ -700,9 +700,12 @@ def test_accounts_projects_postgresql_migrations() -> None:
                             reason="manual",
                             closed_by="cross-project-test",
                         )
-                    assert await db.scalar(
-                        select(DialogSession.state).where(DialogSession.id == "session-1")
-                    ) == "active"
+                    assert (
+                        await db.scalar(
+                            select(DialogSession.state).where(DialogSession.id == "session-1")
+                        )
+                        == "active"
+                    )
 
                 for statement, values in (
                     (
@@ -1000,9 +1003,7 @@ def test_agent_release_lifecycle_postgresql() -> None:
                             content={"text": "first turn"},
                             external_message_id="fence-message-1",
                         ),
-                        outbound=(
-                            MessageInput(role="assistant", content={"text": "first reply"}),
-                        ),
+                        outbound=(MessageInput(role="assistant", content={"text": "first reply"}),),
                         outbox=(
                             OutboundIntent(
                                 payload={"text": "first reply"},

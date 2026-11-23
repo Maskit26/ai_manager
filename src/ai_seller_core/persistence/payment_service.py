@@ -213,6 +213,8 @@ def build_tariff_snapshot(
         },
         "features": tariff_plan.features,
         "limits": tariff_plan.limits,
+        "included_agents": tariff_plan.included_agents,
+        "max_agents": tariff_plan.max_agents,
         "dancoin_grant_conditions": tariff_plan.dancoin_grant_conditions,
         "dancoin_grant_amount": f"{dancoin_grant_amount:.2f}",
     }
@@ -414,9 +416,16 @@ def _assert_invoice_matches(
     period_start: datetime | None,
     period_end: datetime | None,
 ) -> None:
+    existing_snapshot = invoice.snapshot
+    if isinstance(existing_snapshot, dict):
+        existing_snapshot = dict(existing_snapshot)
+        for key in ("included_agents", "max_agents"):
+            if key not in existing_snapshot and key in snapshot:
+                existing_snapshot[key] = snapshot[key]
+
     if (
         invoice.purchase_type != purchase_type
-        or invoice.snapshot != snapshot
+        or existing_snapshot != snapshot
         or invoice.currency != currency
         or invoice.total != total
         or invoice.period_start != period_start
