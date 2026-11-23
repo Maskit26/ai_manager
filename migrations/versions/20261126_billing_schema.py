@@ -1,7 +1,7 @@
 """Create billing catalogs, accounting tables, and usage records."""
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "20261126_billing_schema"
@@ -17,9 +17,7 @@ def upgrade() -> None:
         sa.Column("code", sa.String(length=100), nullable=False),
         sa.Column("version", sa.Integer(), nullable=False),
         sa.Column("name", sa.String(length=200), nullable=False),
-        sa.Column(
-            "is_active", sa.Boolean(), server_default=sa.text("false"), nullable=False
-        ),
+        sa.Column("is_active", sa.Boolean(), server_default=sa.text("false"), nullable=False),
         sa.Column("included_agents", sa.Integer(), nullable=True),
         sa.Column("max_agents", sa.Integer(), nullable=True),
         sa.Column("extra_agent_daily_dancoin", sa.Numeric(12, 2), nullable=True),
@@ -81,18 +79,12 @@ def upgrade() -> None:
         sa.Column("model_id", sa.String(length=100), nullable=False),
         sa.Column("version", sa.Integer(), nullable=False),
         sa.Column("name", sa.String(length=200), nullable=False),
-        sa.Column(
-            "is_active", sa.Boolean(), server_default=sa.text("false"), nullable=False
-        ),
+        sa.Column("is_active", sa.Boolean(), server_default=sa.text("false"), nullable=False),
         sa.Column("input_price_per_1k", sa.Numeric(18, 8), nullable=True),
         sa.Column("output_price_per_1k", sa.Numeric(18, 8), nullable=True),
         sa.Column("long_context_threshold_tokens", sa.BigInteger(), nullable=True),
-        sa.Column(
-            "long_context_input_price_per_1k", sa.Numeric(18, 8), nullable=True
-        ),
-        sa.Column(
-            "long_context_output_price_per_1k", sa.Numeric(18, 8), nullable=True
-        ),
+        sa.Column("long_context_input_price_per_1k", sa.Numeric(18, 8), nullable=True),
+        sa.Column("long_context_output_price_per_1k", sa.Numeric(18, 8), nullable=True),
         sa.Column(
             "capabilities",
             postgresql.JSONB(astext_type=sa.Text()),
@@ -127,14 +119,11 @@ def upgrade() -> None:
             name="ck_llm_models_long_output_price_nonnegative",
         ),
         sa.CheckConstraint(
-            "NOT is_active OR (input_price_per_1k IS NOT NULL AND "
-            "output_price_per_1k IS NOT NULL)",
+            "NOT is_active OR (input_price_per_1k IS NOT NULL AND output_price_per_1k IS NOT NULL)",
             name="ck_llm_models_active_has_base_prices",
         ),
         sa.PrimaryKeyConstraint("id", name="pk_llm_models"),
-        sa.UniqueConstraint(
-            "model_id", "version", name="uq_llm_models_model_version"
-        ),
+        sa.UniqueConstraint("model_id", "version", name="uq_llm_models_model_version"),
     )
     op.create_index("ix_llm_models_active", "llm_models", ["is_active"])
 
@@ -147,28 +136,18 @@ def upgrade() -> None:
         sa.Column("dancoin_amount", sa.Numeric(12, 2), nullable=False),
         sa.Column("price_amount", sa.Numeric(12, 2), nullable=False),
         sa.Column("currency", sa.String(length=3), nullable=False),
-        sa.Column(
-            "is_active", sa.Boolean(), server_default=sa.text("false"), nullable=False
-        ),
+        sa.Column("is_active", sa.Boolean(), server_default=sa.text("false"), nullable=False),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
             server_default=sa.func.now(),
             nullable=False,
         ),
-        sa.CheckConstraint(
-            "version > 0", name="ck_dancoin_packages_version_positive"
-        ),
-        sa.CheckConstraint(
-            "dancoin_amount > 0", name="ck_dancoin_packages_amount_positive"
-        ),
-        sa.CheckConstraint(
-            "price_amount >= 0", name="ck_dancoin_packages_price_nonnegative"
-        ),
+        sa.CheckConstraint("version > 0", name="ck_dancoin_packages_version_positive"),
+        sa.CheckConstraint("dancoin_amount > 0", name="ck_dancoin_packages_amount_positive"),
+        sa.CheckConstraint("price_amount >= 0", name="ck_dancoin_packages_price_nonnegative"),
         sa.PrimaryKeyConstraint("id", name="pk_dancoin_packages"),
-        sa.UniqueConstraint(
-            "code", "version", name="uq_dancoin_packages_code_version"
-        ),
+        sa.UniqueConstraint("code", "version", name="uq_dancoin_packages_code_version"),
     )
     op.create_index("ix_dancoin_packages_active", "dancoin_packages", ["is_active"])
 
@@ -178,9 +157,7 @@ def upgrade() -> None:
         sa.Column("account_id", sa.String(length=36), nullable=False),
         sa.Column("tariff_plan_id", sa.String(length=36), nullable=False),
         sa.Column("status", sa.String(length=32), nullable=False),
-        sa.Column(
-            "trial_used", sa.Boolean(), server_default=sa.text("false"), nullable=False
-        ),
+        sa.Column("trial_used", sa.Boolean(), server_default=sa.text("false"), nullable=False),
         sa.Column("current_period_start", sa.DateTime(timezone=True), nullable=False),
         sa.Column("current_period_end", sa.DateTime(timezone=True), nullable=True),
         sa.Column("grace_until", sa.DateTime(timezone=True), nullable=True),
@@ -229,9 +206,7 @@ def upgrade() -> None:
         "subscriptions",
         ["account_id"],
         unique=True,
-        postgresql_where=sa.text(
-            "status IN ('trial', 'active', 'grace_period', 'parking')"
-        ),
+        postgresql_where=sa.text("status IN ('trial', 'active', 'grace_period', 'parking')"),
     )
     op.create_index(
         "uq_subscriptions_trial_account",
@@ -285,9 +260,7 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
-        sa.CheckConstraint(
-            "grant_balance >= 0", name="ck_dancoin_balances_grant_nonnegative"
-        ),
+        sa.CheckConstraint("grant_balance >= 0", name="ck_dancoin_balances_grant_nonnegative"),
         sa.CheckConstraint(
             "purchased_balance >= 0",
             name="ck_dancoin_balances_purchased_nonnegative",
@@ -296,9 +269,7 @@ def upgrade() -> None:
             "reserved_grant >= 0 AND reserved_purchased >= 0",
             name="ck_dancoin_balances_reserved_nonnegative",
         ),
-        sa.CheckConstraint(
-            "debt_balance >= 0", name="ck_dancoin_balances_debt_nonnegative"
-        ),
+        sa.CheckConstraint("debt_balance >= 0", name="ck_dancoin_balances_debt_nonnegative"),
         sa.ForeignKeyConstraint(
             ["account_id"],
             ["accounts.id"],
@@ -338,9 +309,7 @@ def upgrade() -> None:
             "source IS NULL OR source IN ('grant', 'purchase', 'system')",
             name="ck_dancoin_transactions_source",
         ),
-        sa.CheckConstraint(
-            "amount <> 0", name="ck_dancoin_transactions_amount_nonzero"
-        ),
+        sa.CheckConstraint("amount <> 0", name="ck_dancoin_transactions_amount_nonzero"),
         sa.ForeignKeyConstraint(
             ["account_id"],
             ["accounts.id"],
@@ -383,9 +352,7 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("settled_at", sa.DateTime(timezone=True), nullable=True),
-        sa.CheckConstraint(
-            "amount > 0", name="ck_dancoin_reservations_amount_positive"
-        ),
+        sa.CheckConstraint("amount > 0", name="ck_dancoin_reservations_amount_positive"),
         sa.CheckConstraint(
             "grant_amount >= 0 AND purchased_amount >= 0 "
             "AND amount = grant_amount + purchased_amount",
@@ -402,9 +369,7 @@ def upgrade() -> None:
             ondelete="RESTRICT",
         ),
         sa.PrimaryKeyConstraint("id", name="pk_dancoin_reservations"),
-        sa.UniqueConstraint(
-            "operation_id", name="uq_dancoin_reservations_operation"
-        ),
+        sa.UniqueConstraint("operation_id", name="uq_dancoin_reservations_operation"),
     )
     op.create_index(
         "ix_dancoin_reservations_account_status",
@@ -449,9 +414,7 @@ def upgrade() -> None:
             "account_id", "idempotency_key", name="uq_invoices_account_idempotency"
         ),
     )
-    op.create_index(
-        "ix_invoices_account_created", "invoices", ["account_id", "created_at"]
-    )
+    op.create_index("ix_invoices_account_created", "invoices", ["account_id", "created_at"])
 
     op.create_table(
         "payments",
@@ -495,9 +458,7 @@ def upgrade() -> None:
             "account_id", "idempotency_key", name="uq_payments_account_idempotency"
         ),
     )
-    op.create_index(
-        "ix_payments_account_created", "payments", ["account_id", "created_at"]
-    )
+    op.create_index("ix_payments_account_created", "payments", ["account_id", "created_at"])
     op.create_index(
         "uq_payments_succeeded_invoice",
         "payments",
@@ -616,9 +577,7 @@ def upgrade() -> None:
             ondelete="RESTRICT",
         ),
         sa.PrimaryKeyConstraint("id", name="pk_usage_records"),
-        sa.UniqueConstraint(
-            "idempotency_key", name="uq_usage_records_idempotency_key"
-        ),
+        sa.UniqueConstraint("idempotency_key", name="uq_usage_records_idempotency_key"),
     )
     op.create_index(
         "ix_usage_records_account_period_metric",
@@ -642,12 +601,8 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
-        sa.CheckConstraint(
-            "slot_limit >= 0", name="ck_agent_slots_limit_nonnegative"
-        ),
-        sa.CheckConstraint(
-            "used_slots >= 0", name="ck_agent_slots_used_nonnegative"
-        ),
+        sa.CheckConstraint("slot_limit >= 0", name="ck_agent_slots_limit_nonnegative"),
+        sa.CheckConstraint("used_slots >= 0", name="ck_agent_slots_used_nonnegative"),
         sa.ForeignKeyConstraint(
             ["project_id"],
             ["projects.id"],
@@ -712,41 +667,26 @@ def downgrade() -> None:
     op.execute("DROP FUNCTION IF EXISTS prevent_subscription_snapshot_mutation()")
     op.execute("DROP TRIGGER IF EXISTS trg_invoices_snapshot_immutable ON invoices")
     op.execute("DROP FUNCTION IF EXISTS prevent_invoice_snapshot_mutation()")
-    op.execute(
-        "DROP TRIGGER IF EXISTS trg_dancoin_transactions_immutable "
-        "ON dancoin_transactions"
-    )
+    op.execute("DROP TRIGGER IF EXISTS trg_dancoin_transactions_immutable ON dancoin_transactions")
     op.execute("DROP FUNCTION IF EXISTS prevent_dancoin_transaction_mutation()")
 
     op.drop_table("agent_slots")
-    op.drop_index(
-        "ix_usage_records_project_period_metric", table_name="usage_records"
-    )
-    op.drop_index(
-        "ix_usage_records_account_period_metric", table_name="usage_records"
-    )
+    op.drop_index("ix_usage_records_project_period_metric", table_name="usage_records")
+    op.drop_index("ix_usage_records_account_period_metric", table_name="usage_records")
     op.drop_table("usage_records")
-    op.drop_index(
-        "ix_payment_events_account_received", table_name="payment_events"
-    )
+    op.drop_index("ix_payment_events_account_received", table_name="payment_events")
     op.drop_table("payment_events")
     op.drop_index("uq_payments_succeeded_invoice", table_name="payments")
     op.drop_index("ix_payments_account_created", table_name="payments")
     op.drop_table("payments")
     op.drop_index("ix_invoices_account_created", table_name="invoices")
     op.drop_table("invoices")
-    op.drop_index(
-        "ix_dancoin_reservations_account_status", table_name="dancoin_reservations"
-    )
+    op.drop_index("ix_dancoin_reservations_account_status", table_name="dancoin_reservations")
     op.drop_table("dancoin_reservations")
-    op.drop_index(
-        "ix_dancoin_transactions_account_time", table_name="dancoin_transactions"
-    )
+    op.drop_index("ix_dancoin_transactions_account_time", table_name="dancoin_transactions")
     op.drop_table("dancoin_transactions")
     op.drop_table("dancoin_balances")
-    op.drop_index(
-        "ix_subscriptions_status_period_end", table_name="subscriptions"
-    )
+    op.drop_index("ix_subscriptions_status_period_end", table_name="subscriptions")
     op.drop_index("uq_subscriptions_trial_account", table_name="subscriptions")
     op.drop_index("uq_subscriptions_current_account", table_name="subscriptions")
     op.drop_table("subscriptions")

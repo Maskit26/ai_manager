@@ -134,8 +134,21 @@ def test_accounts_projects_postgresql_migrations() -> None:
                 await connection.run_sync(upgrade)
                 assert await connection.scalar(text("SELECT count(*) FROM alembic_version")) == 1
                 assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                    "20261128_entitlements_engine"
+                    "20261129_idempotency_not_null"
                 )
+                idempotency_nullability = await connection.execute(
+                    text(
+                        "SELECT table_name, is_nullable "
+                        "FROM information_schema.columns "
+                        "WHERE table_schema = current_schema() "
+                        "AND table_name IN ('invoices', 'payments') "
+                        "AND column_name = 'idempotency_key'"
+                    )
+                )
+                assert dict(idempotency_nullability.all()) == {
+                    "invoices": "NO",
+                    "payments": "NO",
+                }
 
                 project = {
                     "id": "project-1",
@@ -351,6 +364,7 @@ def test_accounts_projects_postgresql_migrations() -> None:
                         "number": "INV-1",
                         "purchase_type": "tariff",
                         "status": "pending",
+                        "idempotency_key": "invoice-create-1",
                         "snapshot": {
                             "schema_version": 1,
                             "item": {"code": "test-plan", "version": 1},

@@ -175,6 +175,34 @@ def test_billing_service_postgresql_transactions() -> None:
             assert settlement.amount == Decimal("-6.00")
             assert settlement.balance_after == Decimal("9.00")
 
+            await in_transaction(
+                lambda db: reserve_dancoin(
+                    db,
+                    account_id=account_id,
+                    operation_id="llm-call-zero",
+                    amount=Decimal("1.00"),
+                )
+            )
+
+            async def settle_zero_again(db: AsyncSession):
+                first = await settle_reservation(
+                    db,
+                    account_id=account_id,
+                    operation_id="llm-call-zero",
+                    actual_amount=Decimal("0.00"),
+                )
+                second = await settle_reservation(
+                    db,
+                    account_id=account_id,
+                    operation_id="llm-call-zero",
+                    actual_amount=Decimal("0.00"),
+                )
+                assert first.id == second.id
+                assert first.type == "release"
+                assert first.amount == Decimal("1.00")
+
+            await in_transaction(settle_zero_again)
+
             async def settle_again(db: AsyncSession):
                 first = await settle_reservation(
                     db,
@@ -427,7 +455,28 @@ def test_billing_service_postgresql_transactions() -> None:
             async def transaction_count(db: AsyncSession) -> int:
                 return await db.scalar(select(func.count()).select_from(DancoinTransaction))
 
-            assert await in_transaction(transaction_count) == 18
+            assert await in_transaction(transaction_count) == 20
+
+            boundary_now = datetime.now(UTC)
+            await in_transaction(
+                lambda db: reserve_dancoin(
+                    db,
+                    account_id=account_id,
+                    operation_id="llm-call-timeout-boundary",
+                    amount=Decimal("1.00"),
+                    expires_at=boundary_now,
+                )
+            )
+            boundary_timeout = await in_transaction(
+                lambda db: timeout_reservation(
+                    db,
+                    account_id=account_id,
+                    operation_id="llm-call-timeout-boundary",
+                    now=boundary_now,
+                )
+            )
+            assert boundary_timeout.type == "timeout_charge"
+            assert boundary_timeout.amount == Decimal("-1.00")
         finally:
             try:
                 if schema_created:

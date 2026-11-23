@@ -7,7 +7,6 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
-    ForeignKey,
     ForeignKeyConstraint,
     Index,
     Integer,
@@ -116,8 +115,7 @@ class LlmModel(Base):
             name="ck_llm_models_long_output_price_nonnegative",
         ),
         CheckConstraint(
-            "NOT is_active OR (input_price_per_1k IS NOT NULL AND "
-            "output_price_per_1k IS NOT NULL)",
+            "NOT is_active OR (input_price_per_1k IS NOT NULL AND output_price_per_1k IS NOT NULL)",
             name="ck_llm_models_active_has_base_prices",
         ),
         Index("ix_llm_models_active", "is_active"),
@@ -133,12 +131,8 @@ class LlmModel(Base):
     input_price_per_1k: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))
     output_price_per_1k: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))
     long_context_threshold_tokens: Mapped[int | None] = mapped_column(BigInteger)
-    long_context_input_price_per_1k: Mapped[Decimal | None] = mapped_column(
-        Numeric(18, 8)
-    )
-    long_context_output_price_per_1k: Mapped[Decimal | None] = mapped_column(
-        Numeric(18, 8)
-    )
+    long_context_input_price_per_1k: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))
+    long_context_output_price_per_1k: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))
     capabilities: Mapped[dict] = mapped_column(
         PrivacyRedactedJSONB(),
         nullable=False,
@@ -202,9 +196,7 @@ class Subscription(Base):
             "uq_subscriptions_current_account",
             "account_id",
             unique=True,
-            postgresql_where=text(
-                "status IN ('trial', 'active', 'grace_period', 'parking')"
-            ),
+            postgresql_where=text("status IN ('trial', 'active', 'grace_period', 'parking')"),
         ),
         Index(
             "uq_subscriptions_trial_account",
@@ -222,9 +214,7 @@ class Subscription(Base):
     trial_used: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
-    current_period_start: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    current_period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     grace_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     canceled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -368,9 +358,7 @@ class Invoice(Base):
     __table_args__ = (
         UniqueConstraint("number", name="uq_invoices_number"),
         UniqueConstraint("id", "account_id", name="uq_invoices_id_account"),
-        UniqueConstraint(
-            "account_id", "idempotency_key", name="uq_invoices_account_idempotency"
-        ),
+        UniqueConstraint("account_id", "idempotency_key", name="uq_invoices_account_idempotency"),
         CheckConstraint("total >= 0", name="ck_invoices_total_nonnegative"),
         ForeignKeyConstraint(
             ["account_id"],
@@ -391,7 +379,7 @@ class Invoice(Base):
     period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     total: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
-    idempotency_key: Mapped[str | None] = mapped_column(String(200))
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -405,12 +393,8 @@ class Payment(Base):
             "external_payment_id",
             name="uq_payments_provider_external_id",
         ),
-        UniqueConstraint(
-            "id", "account_id", "invoice_id", name="uq_payments_id_account_invoice"
-        ),
-        UniqueConstraint(
-            "account_id", "idempotency_key", name="uq_payments_account_idempotency"
-        ),
+        UniqueConstraint("id", "account_id", "invoice_id", name="uq_payments_id_account_invoice"),
+        UniqueConstraint("account_id", "idempotency_key", name="uq_payments_account_idempotency"),
         CheckConstraint("amount >= 0", name="ck_payments_amount_nonnegative"),
         ForeignKeyConstraint(
             ["account_id"],
@@ -438,7 +422,7 @@ class Payment(Base):
     invoice_id: Mapped[str] = mapped_column(String(36), nullable=False)
     provider: Mapped[str] = mapped_column(String(100), nullable=False)
     external_payment_id: Mapped[str | None] = mapped_column(String(200))
-    idempotency_key: Mapped[str | None] = mapped_column(String(200))
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -564,9 +548,7 @@ class AgentSlot(Base):
 
     project_id: Mapped[str] = mapped_column(String(100), primary_key=True)
     slot_limit: Mapped[int] = mapped_column(Integer, nullable=False)
-    used_slots: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default="0"
-    )
+    used_slots: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
