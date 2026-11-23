@@ -17,6 +17,7 @@ from ai_seller_core.core.config import Settings
 from ai_seller_core.dialog.session_service import close_session, open_or_resume_session
 from ai_seller_core.persistence.models import (
     Account,
+    AccountEntitlement,
     AccountMembership,
     BackgroundJob,
     Channel,
@@ -44,10 +45,13 @@ def test_accounts_projects_offline_migration() -> None:
 
     assert "CREATE TABLE accounts" in sql
     assert "CREATE TABLE account_memberships" in sql
+    assert "CREATE TABLE entitlements" in sql
     assert "CREATE TABLE projects" in sql
     assert "CREATE TABLE channels" in sql
     assert "FOREIGN KEY(account_id) REFERENCES accounts (id) ON DELETE RESTRICT" in sql
     assert "uq_account_memberships_account_user" in sql
+    assert "uq_entitlements_account_id" in sql
+    assert "ck_entitlements_max_projects_nonnegative" in sql
     assert "ix_projects_account_id" in sql
     assert "fk_dialog_sessions_project_channel" in sql
     assert "fk_inbox_project_channel" in sql
@@ -92,7 +96,7 @@ def test_accounts_projects_postgresql_migrations() -> None:
                 await connection.run_sync(upgrade)
                 assert await connection.scalar(text("SELECT count(*) FROM alembic_version")) == 1
                 assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                    "20261123_project_deletion"
+                    "20261125_account_entitlements"
                 )
 
                 project = {
@@ -137,6 +141,41 @@ def test_accounts_projects_postgresql_migrations() -> None:
                         "role": "owner",
                     },
                 )
+                await connection.execute(
+                    insert(AccountEntitlement),
+                    {"id": "entitlement-1", "account_id": "account-1"},
+                )
+                await connection.execute(
+                    insert(AccountEntitlement),
+                    {
+                        "id": "entitlement-2",
+                        "account_id": "account-2",
+                        "max_catalog_sources_per_project": None,
+                    },
+                )
+                entitlement = await connection.execute(
+                    select(
+                        AccountEntitlement.catalog_import_enabled,
+                        AccountEntitlement.knowledge_base_enabled,
+                        AccountEntitlement.multi_channel_enabled,
+                        AccountEntitlement.max_projects,
+                        AccountEntitlement.max_catalog_sources_per_project,
+                    ).where(
+                        AccountEntitlement.account_id == "account-1"
+                    )
+                )
+                entitlement = entitlement.one()
+                assert entitlement.catalog_import_enabled is True
+                assert entitlement.knowledge_base_enabled is True
+                assert entitlement.multi_channel_enabled is True
+                assert entitlement.max_projects is None
+                assert entitlement.max_catalog_sources_per_project == 1
+                unlimited_catalog_sources = await connection.scalar(
+                    select(AccountEntitlement.max_catalog_sources_per_project).where(
+                        AccountEntitlement.account_id == "account-2"
+                    )
+                )
+                assert unlimited_catalog_sources is None
                 await connection.execute(
                     text(
                         "INSERT INTO agents (id, project_id, status) VALUES "
@@ -330,6 +369,21 @@ def test_accounts_projects_postgresql_migrations() -> None:
                             "account_id": "account-1",
                             "user_id": "user-2",
                             "role": "invalid",
+                        },
+                    ),
+                    (
+                        insert(AccountEntitlement),
+                        {
+                            "id": "entitlement-duplicate-account",
+                            "account_id": "account-1",
+                        },
+                    ),
+                    (
+                        insert(AccountEntitlement),
+                        {
+                            "id": "entitlement-negative-projects",
+                            "account_id": "account-2",
+                            "max_projects": -1,
                         },
                     ),
                     (

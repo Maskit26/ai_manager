@@ -195,11 +195,11 @@ async def purge_due_project_deletions(
         )
         if project_status is not None and project_status != "archived":
             raise RuntimeError("A pending project deletion requires an archived project")
+        if not await _retention_elapsed(session, request.project_id, cutoff):
+            continue
         if vector_store is None:
             raise ProjectVectorCleanupError("Qdrant is not configured")
         await vector_store.delete_project_points(request.project_id)
-        if not await _retention_elapsed(session, request.project_id, cutoff):
-            continue
         await _delete_project_rows(session, request.project_id)
         request.status = "completed"
         request.completed_at = now

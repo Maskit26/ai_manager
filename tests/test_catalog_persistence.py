@@ -440,7 +440,7 @@ def test_catalog_constraints_and_atomic_finalization_postgresql() -> None:
                     (expired_audit, retained_audit, expired_event, retained_event)
                 )
                 await session.flush()
-                assert await purge_expired_activity(session) == (1, 1)
+                assert await purge_expired_activity(session) == (1, 1, 0)
                 remaining_event_ids = set(
                     (
                         await session.scalars(
@@ -705,6 +705,44 @@ def test_catalog_constraints_and_atomic_finalization_postgresql() -> None:
                     )
                 )
                 import_id = import_record.id
+                await session.commit()
+
+                expired_error = CatalogImportError(
+                    id=new_id(),
+                    project_id=project_a_id,
+                    import_id=critical_import_id,
+                    row_number=2,
+                    error_code="expired_error",
+                    error_message="Expired import error",
+                    category="non-critical",
+                    created_at=datetime.now(UTC) - timedelta(days=31),
+                )
+                retained_error = CatalogImportError(
+                    id=new_id(),
+                    project_id=project_a_id,
+                    import_id=critical_import_id,
+                    row_number=3,
+                    error_code="retained_error",
+                    error_message="Retained import error",
+                    category="non-critical",
+                    created_at=datetime.now(UTC) - timedelta(days=29),
+                )
+                session.add_all((expired_error, retained_error))
+                await session.flush()
+                assert await purge_expired_activity(session) == (0, 0, 1)
+                remaining_error_ids = set(
+                    (
+                        await session.scalars(
+                            select(CatalogImportError.id).where(
+                                CatalogImportError.id.in_(
+                                    (expired_error.id, retained_error.id)
+                                )
+                            )
+                        )
+                    ).all()
+                )
+                assert expired_error.id not in remaining_error_ids
+                assert retained_error.id in remaining_error_ids
                 await session.commit()
 
                 with pytest.raises(IntegrityError):

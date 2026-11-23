@@ -3,6 +3,7 @@ from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -14,6 +15,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    true,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -103,6 +105,49 @@ class AccountMembership(Base):
     )
     user_id: Mapped[str] = mapped_column(Text, nullable=False)
     role: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class AccountEntitlement(Base):
+    __tablename__ = "entitlements"
+    __table_args__ = (
+        UniqueConstraint("account_id", name="uq_entitlements_account_id"),
+        CheckConstraint(
+            "max_projects IS NULL OR max_projects >= 0",
+            name="ck_entitlements_max_projects_nonnegative",
+        ),
+        CheckConstraint(
+            "max_catalog_sources_per_project IS NULL OR max_catalog_sources_per_project >= 0",
+            name="ck_entitlements_max_catalog_sources_nonnegative",
+        ),
+        CheckConstraint(
+            "max_products_per_project IS NULL OR max_products_per_project >= 0",
+            name="ck_entitlements_max_products_nonnegative",
+        ),
+        CheckConstraint(
+            "max_kb_documents_per_project IS NULL OR max_kb_documents_per_project >= 0",
+            name="ck_entitlements_max_kb_documents_nonnegative",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    account_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("accounts.id", ondelete="RESTRICT"), nullable=False
+    )
+    catalog_import_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
+    knowledge_base_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
+    multi_channel_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
+    max_projects: Mapped[int | None] = mapped_column(Integer)
+    max_catalog_sources_per_project: Mapped[int | None] = mapped_column(
+        Integer, default=1, server_default="1"
+    )
+    max_products_per_project: Mapped[int | None] = mapped_column(Integer)
+    max_kb_documents_per_project: Mapped[int | None] = mapped_column(Integer)
 
 
 class Project(Base):

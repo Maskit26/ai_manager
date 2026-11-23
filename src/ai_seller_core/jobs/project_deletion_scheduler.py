@@ -16,7 +16,7 @@ from ai_seller_core.persistence.retention import purge_expired_activity
 logger = logging.getLogger(__name__)
 
 
-async def run_once() -> tuple[int, tuple[int, int]]:
+async def run_once() -> tuple[int, tuple[int, int, int]]:
     settings = get_settings()
     async with database_lifespan(settings):
         async with AsyncExitStack() as stack:
@@ -47,6 +47,7 @@ async def run_once() -> tuple[int, tuple[int, int]]:
             "projects_purged": purged_projects,
             "domain_events_deleted": expired_activity[0],
             "audit_entries_deleted": expired_activity[1],
+            "catalog_import_errors_deleted": expired_activity[2],
         },
     )
     return purged_projects, expired_activity

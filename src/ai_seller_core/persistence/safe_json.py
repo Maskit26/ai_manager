@@ -118,6 +118,15 @@ class RedactedText(TypeDecorator[str]):
         return redact_sensitive_data(value) if value is not None else None
 
 
+class PrivacyRedactedText(RedactedText):
+    def process_bind_param(self, value: str | None, dialect: Any) -> str | None:
+        return (
+            redact_sensitive_data(value, mask_personal_data=True)
+            if value is not None
+            else None
+        )
+
+
 class PrivacyRedactedJSONB(RedactedJSONB):
     def process_bind_param(self, value: Any, dialect: Any) -> Any:
         return redact_sensitive_data(value, mask_personal_data=True)

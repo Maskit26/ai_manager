@@ -19,6 +19,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ai_seller_core.persistence.base import Base
+from ai_seller_core.persistence.safe_json import PrivacyRedactedText
 
 
 def _new_id() -> str:
@@ -138,6 +139,7 @@ class CatalogImportError(Base):
             ondelete="CASCADE",
         ),
         Index("ix_catalog_import_errors_import", "project_id", "import_id"),
+        Index("ix_catalog_import_errors_created_at", "created_at"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
@@ -145,9 +147,9 @@ class CatalogImportError(Base):
     import_id: Mapped[str] = mapped_column(String(36), nullable=False)
     row_number: Mapped[int] = mapped_column(Integer, nullable=False)
     error_code: Mapped[str] = mapped_column(String(100), nullable=False)
-    error_message: Mapped[str] = mapped_column(Text, nullable=False)
+    error_message: Mapped[str] = mapped_column(PrivacyRedactedText(), nullable=False)
     category: Mapped[str] = mapped_column(String(30), nullable=False)
-    safe_fragment: Mapped[str | None] = mapped_column(Text)
+    safe_fragment: Mapped[str | None] = mapped_column(PrivacyRedactedText())
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

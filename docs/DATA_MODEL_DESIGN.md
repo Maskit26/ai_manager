@@ -17,7 +17,8 @@
 | Сущность или группа | Владение / ключи изоляции | Связи |
 |---|---|---|
 | `accounts` | Корневая сущность аккаунта | На неё ссылаются `projects` и аккаунтные записи. |
-| `account_memberships`, `entitlements` | Аккаунт: `account_id` | Каждая запись принадлежит аккаунту. Уникальность membership — внутри аккаунта; роли проверяются сервером. |
+| `account_memberships` | Аккаунт: `account_id` | Каждая запись принадлежит аккаунту. Уникальность membership — внутри аккаунта; роли проверяются сервером. |
+| `entitlements` | Аккаунт: `account_id`, одна запись на аккаунт | `catalog_import_enabled`, `knowledge_base_enabled`, `multi_channel_enabled` — boolean-флаги (по умолчанию true). Квоты: `max_projects`, `max_catalog_sources_per_project` (по умолчанию 1), `max_products_per_project`, `max_kb_documents_per_project`; `NULL` означает безлимит. |
 | `projects` | Проект принадлежит аккаунту: `account_id` | `account_id -> accounts.id`; индекс по `account_id`. |
 | `agents`, `agent_drafts`, `agent_releases` | Проект: `project_id` | Агент принадлежит проекту; draft и неизменяемые releases — агенту в том же проекте. До первой публикации `active_release_id` может быть пустым; иначе он должен указывать на release того же агента. Версия уникальна в пределах агента. Draft хранит изменяемый JSONB `config`; release — неизменяемый JSONB `snapshot` с ключами `prompt`, `tone`, `model_settings`, `sales_rules`, `functions`, `response_settings`. Credentials канала, каталог и база знаний в snapshot не включаются. |
 | `channels` | Проект: `project_id` | Канал принадлежит проекту. Идентификатор подключения уникален согласно контракту интеграции. |
@@ -117,6 +118,7 @@
 3. `domain_events`, `audit_log`, `llm_calls` и `usage_counters` хранятся вместе со всем архивом в течение 30 дней и удаляются при окончательном удалении проекта.
 4. После 30 дней удаляются Qdrant points из одной конфигурируемой коллекции по фильтру с `project_id` и `object_type` (`kb_chunk` или `product`). Для Qdrant нет SQL FK. Сбой внешней очистки нельзя считать успешным завершением удаления проекта.
 5. После 30 дней отдельная ежедневная команда удаляет проектные записи в порядке внешних ключей и корневую запись проекта. Повторный запуск процедуры удаления должен быть безопасным.
+6. Диагностические записи `catalog_import_errors` для проектов, не ожидающих удаления, очищаются после 30 дней. Это не удаляет импортированный каталог, продукты или Qdrant points активного проекта.
 
 Порядок очистки принят: сначала Qdrant, затем PostgreSQL. В текущей схеме project FK используют `RESTRICT`; сервис удаляет дочерние строки явно в порядке зависимостей. Восстановление возможно в течение 30 дней; защищённые API endpoints архивации/удаления и восстановления будут реализованы после появления общей авторизации. Команда: `uv run --no-sync python -m ai_seller_core.jobs.project_deletion_scheduler`; она запускается ежедневно через системный scheduler/cron, не через worker.
 
