@@ -2,6 +2,8 @@ import asyncio
 import io
 import os
 from dataclasses import replace
+from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
 
@@ -9,8 +11,8 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from pydantic import ValidationError
-from sqlalchemy import delete, insert, select, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import delete, insert, select, text, update
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from ai_seller_core.core.config import Settings
@@ -19,13 +21,25 @@ from ai_seller_core.persistence.models import (
     Account,
     AccountEntitlement,
     AccountMembership,
+    AgentSlot,
     BackgroundJob,
     Channel,
     ChatMessage,
+    DancoinBalance,
+    DancoinPackage,
+    DancoinReservation,
+    DancoinTransaction,
     DialogSession,
+    Invoice,
     InboxEvent,
+    LlmModel,
     OutboxMessage,
+    Payment,
+    PaymentEvent,
     Project,
+    Subscription,
+    TariffPlan,
+    UsageRecord,
 )
 from ai_seller_core.persistence.session_lease import acquire_session_lease, assert_current_fence
 
@@ -48,9 +62,29 @@ def test_accounts_projects_offline_migration() -> None:
     assert "CREATE TABLE entitlements" in sql
     assert "CREATE TABLE projects" in sql
     assert "CREATE TABLE channels" in sql
+    for table in (
+        "tariff_plans",
+        "llm_models",
+        "dancoin_packages",
+        "subscriptions",
+        "dancoin_balances",
+        "dancoin_transactions",
+        "dancoin_reservations",
+        "invoices",
+        "payments",
+        "payment_events",
+        "usage_records",
+        "agent_slots",
+    ):
+        assert f"CREATE TABLE {table}" in sql
     assert "FOREIGN KEY(account_id) REFERENCES accounts (id) ON DELETE RESTRICT" in sql
     assert "uq_account_memberships_account_user" in sql
     assert "uq_entitlements_account_id" in sql
+    assert "uq_tariff_plans_code_version" in sql
+    assert "uq_llm_models_model_version" in sql
+    assert "uq_dancoin_packages_code_version" in sql
+    assert "uq_usage_records_idempotency_key" in sql
+    assert "trg_dancoin_transactions_immutable" in sql
     assert "ck_entitlements_max_projects_nonnegative" in sql
     assert "ix_projects_account_id" in sql
     assert "fk_dialog_sessions_project_channel" in sql
@@ -96,7 +130,7 @@ def test_accounts_projects_postgresql_migrations() -> None:
                 await connection.run_sync(upgrade)
                 assert await connection.scalar(text("SELECT count(*) FROM alembic_version")) == 1
                 assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                    "20261125_account_entitlements"
+                    "20261126_billing_schema"
                 )
 
                 project = {
@@ -153,6 +187,328 @@ def test_accounts_projects_postgresql_migrations() -> None:
                         "max_catalog_sources_per_project": None,
                     },
                 )
+                period_start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+                period_end = datetime(2026, 2, 1, tzinfo=timezone.utc)
+                await connection.execute(
+                    insert(TariffPlan),
+                    {
+                        "id": "plan-version-1",
+                        "code": "test-plan",
+                        "version": 1,
+                        "name": "Test plan",
+                    },
+                )
+                await connection.execute(
+                    insert(TariffPlan),
+                    {
+                        "id": "plan-version-2",
+                        "code": "test-plan",
+                        "version": 2,
+                        "name": "Test plan v2",
+                    },
+                )
+                with pytest.raises(IntegrityError):
+                    async with connection.begin_nested():
+                        await connection.execute(
+                            insert(TariffPlan),
+                            {
+                                "id": "duplicate-plan-version",
+                                "code": "test-plan",
+                                "version": 1,
+                                "name": "Duplicate plan",
+                            },
+                        )
+
+                await connection.execute(
+                    insert(LlmModel),
+                    {
+                        "id": "model-version-1",
+                        "model_id": "test-provider/model",
+                        "version": 1,
+                        "name": "Test model",
+                        "input_price_per_1k": Decimal("0.00100000"),
+                        "output_price_per_1k": Decimal("0.00200000"),
+                        "is_active": True,
+                    },
+                )
+                await connection.execute(
+                    insert(DancoinPackage),
+                    {
+                        "id": "package-version-1",
+                        "code": "test-package",
+                        "version": 1,
+                        "name": "Test package",
+                        "dancoin_amount": Decimal("10.00"),
+                        "price_amount": Decimal("5.00"),
+                        "currency": "USD",
+                    },
+                )
+
+                await connection.execute(
+                    insert(Subscription),
+                    {
+                        "id": "subscription-1",
+                        "account_id": "account-1",
+                        "tariff_plan_id": "plan-version-1",
+                        "status": "active",
+                        "current_period_start": period_start,
+                        "current_period_end": period_end,
+                        "snapshot": {"schema_version": 1, "plan": "test-plan"},
+                    },
+                )
+                with pytest.raises(IntegrityError):
+                    async with connection.begin_nested():
+                        await connection.execute(
+                            insert(Subscription),
+                            {
+                                "id": "subscription-duplicate-current",
+                                "account_id": "account-1",
+                                "tariff_plan_id": "plan-version-2",
+                                "status": "trial",
+                                "current_period_start": period_start,
+                                "current_period_end": period_end,
+                                "snapshot": {"schema_version": 1},
+                            },
+                        )
+                await connection.execute(
+                    insert(Subscription),
+                    {
+                        "id": "subscription-trial-history",
+                        "account_id": "account-2",
+                        "tariff_plan_id": "plan-version-1",
+                        "status": "canceled",
+                        "trial_used": True,
+                        "current_period_start": period_start,
+                        "current_period_end": period_end,
+                        "snapshot": {"schema_version": 1},
+                    },
+                )
+                with pytest.raises(IntegrityError):
+                    async with connection.begin_nested():
+                        await connection.execute(
+                            insert(Subscription),
+                            {
+                                "id": "subscription-second-trial",
+                                "account_id": "account-2",
+                                "tariff_plan_id": "plan-version-2",
+                                "status": "canceled",
+                                "trial_used": True,
+                                "current_period_start": period_start,
+                                "current_period_end": period_end,
+                                "snapshot": {"schema_version": 1},
+                            },
+                        )
+                with pytest.raises(DBAPIError):
+                    async with connection.begin_nested():
+                        await connection.execute(
+                            update(Subscription)
+                            .where(Subscription.id == "subscription-1")
+                            .values(snapshot={"schema_version": 2})
+                        )
+
+                await connection.execute(
+                    insert(DancoinBalance), {"account_id": "account-1"}
+                )
+                await connection.execute(
+                    insert(DancoinTransaction),
+                    {
+                        "id": "ledger-grant-1",
+                        "account_id": "account-1",
+                        "reference": "grant:account-1:period-1",
+                        "type": "grant",
+                        "source": "grant",
+                        "amount": Decimal("10.00"),
+                        "balance_after": Decimal("10.00"),
+                    },
+                )
+                with pytest.raises(DBAPIError):
+                    async with connection.begin_nested():
+                        await connection.execute(
+                            update(DancoinTransaction)
+                            .where(DancoinTransaction.id == "ledger-grant-1")
+                            .values(amount=Decimal("9.00"))
+                        )
+                await connection.execute(
+                    insert(DancoinReservation),
+                    {
+                        "id": "reservation-1",
+                        "account_id": "account-1",
+                        "operation_id": "llm-call-1",
+                        "amount": Decimal("2.00"),
+                        "grant_amount": Decimal("2.00"),
+                        "purchased_amount": Decimal("0.00"),
+                        "status": "reserved",
+                    },
+                )
+
+                await connection.execute(
+                    insert(Invoice),
+                    {
+                        "id": "invoice-1",
+                        "account_id": "account-1",
+                        "number": "INV-1",
+                        "purchase_type": "tariff",
+                        "status": "pending",
+                        "snapshot": {
+                            "schema_version": 1,
+                            "item": {"code": "test-plan", "version": 1},
+                        },
+                        "currency": "USD",
+                        "total": Decimal("5.00"),
+                    },
+                )
+                with pytest.raises(DBAPIError):
+                    async with connection.begin_nested():
+                        await connection.execute(
+                            update(Invoice)
+                            .where(Invoice.id == "invoice-1")
+                            .values(snapshot={"schema_version": 2})
+                        )
+                await connection.execute(
+                    insert(Payment),
+                    {
+                        "id": "payment-1",
+                        "account_id": "account-1",
+                        "invoice_id": "invoice-1",
+                        "provider": "test",
+                        "external_payment_id": "external-payment-1",
+                        "idempotency_key": "checkout-1",
+                        "amount": Decimal("5.00"),
+                        "currency": "USD",
+                        "status": "pending",
+                    },
+                )
+                await connection.execute(
+                    insert(Payment),
+                    {
+                        "id": "payment-succeeded-1",
+                        "account_id": "account-1",
+                        "invoice_id": "invoice-1",
+                        "provider": "test",
+                        "external_payment_id": "external-payment-succeeded-1",
+                        "idempotency_key": "checkout-succeeded-1",
+                        "amount": Decimal("5.00"),
+                        "currency": "USD",
+                        "status": "succeeded",
+                    },
+                )
+                with pytest.raises(IntegrityError):
+                    async with connection.begin_nested():
+                        await connection.execute(
+                            insert(Payment),
+                            {
+                                "id": "payment-succeeded-2",
+                                "account_id": "account-1",
+                                "invoice_id": "invoice-1",
+                                "provider": "test",
+                                "external_payment_id": "external-payment-succeeded-2",
+                                "idempotency_key": "checkout-succeeded-2",
+                                "amount": Decimal("5.00"),
+                                "currency": "USD",
+                                "status": "succeeded",
+                            },
+                        )
+                with pytest.raises(IntegrityError):
+                    async with connection.begin_nested():
+                        await connection.execute(
+                            insert(Payment),
+                            {
+                                "id": "payment-cross-account",
+                                "account_id": "account-2",
+                                "invoice_id": "invoice-1",
+                                "provider": "test",
+                                "amount": Decimal("5.00"),
+                                "currency": "USD",
+                                "status": "pending",
+                            },
+                        )
+                await connection.execute(
+                    insert(PaymentEvent),
+                    {
+                        "id": "payment-event-1",
+                        "account_id": "account-1",
+                        "payment_id": "payment-1",
+                        "invoice_id": "invoice-1",
+                        "provider": "test",
+                        "provider_event_id": "provider-event-1",
+                        "event_type": "payment.succeeded",
+                    },
+                )
+                with pytest.raises(IntegrityError):
+                    async with connection.begin_nested():
+                        await connection.execute(
+                            insert(PaymentEvent),
+                            {
+                                "id": "payment-event-duplicate",
+                                "account_id": "account-1",
+                                "payment_id": "payment-1",
+                                "invoice_id": "invoice-1",
+                                "provider": "test",
+                                "provider_event_id": "provider-event-1",
+                                "event_type": "payment.succeeded",
+                            },
+                        )
+
+                await connection.execute(
+                    insert(UsageRecord),
+                    {
+                        "id": "usage-1",
+                        "account_id": "account-1",
+                        "project_id": "project-1",
+                        "metric": "llm_call",
+                        "quantity": Decimal("1.000000"),
+                        "unit": "call",
+                        "input_tokens": 100,
+                        "output_tokens": 20,
+                        "model_id": "test-provider/model",
+                        "price_version": 1,
+                        "dancoin_cost": Decimal("0.01"),
+                        "period_start": period_start,
+                        "period_end": period_end,
+                        "idempotency_key": "usage-operation-1",
+                    },
+                )
+                with pytest.raises(IntegrityError):
+                    async with connection.begin_nested():
+                        await connection.execute(
+                            insert(UsageRecord),
+                            {
+                                "id": "usage-cross-project",
+                                "account_id": "account-1",
+                                "project_id": "project-2",
+                                "metric": "llm_call",
+                                "quantity": Decimal("1.000000"),
+                                "unit": "call",
+                                "dancoin_cost": Decimal("0.01"),
+                                "period_start": period_start,
+                                "idempotency_key": "usage-operation-2",
+                            },
+                        )
+                with pytest.raises(IntegrityError):
+                    async with connection.begin_nested():
+                        await connection.execute(
+                            insert(UsageRecord),
+                            {
+                                "id": "usage-duplicate-idempotency",
+                                "account_id": "account-1",
+                                "project_id": "project-1",
+                                "metric": "llm_call",
+                                "quantity": Decimal("1.000000"),
+                                "unit": "call",
+                                "dancoin_cost": Decimal("0.01"),
+                                "period_start": period_start,
+                                "idempotency_key": "usage-operation-1",
+                            },
+                        )
+                await connection.execute(
+                    insert(AgentSlot),
+                    {
+                        "project_id": "project-1",
+                        "slot_limit": 3,
+                        "used_slots": 1,
+                    },
+                )
+
                 entitlement = await connection.execute(
                     select(
                         AccountEntitlement.catalog_import_enabled,

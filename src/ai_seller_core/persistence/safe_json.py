@@ -119,6 +119,8 @@ class RedactedText(TypeDecorator[str]):
 
 
 class PrivacyRedactedText(RedactedText):
+    cache_ok = True
+
     def process_bind_param(self, value: str | None, dialect: Any) -> str | None:
         return (
             redact_sensitive_data(value, mask_personal_data=True)
@@ -128,5 +130,7 @@ class PrivacyRedactedText(RedactedText):
 
 
 class PrivacyRedactedJSONB(RedactedJSONB):
+    cache_ok = True
+
     def process_bind_param(self, value: Any, dialect: Any) -> Any:
         return redact_sensitive_data(value, mask_personal_data=True)

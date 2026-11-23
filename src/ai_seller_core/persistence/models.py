@@ -20,6 +20,20 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from ai_seller_core.persistence.billing_models import (
+    AgentSlot as AgentSlot,
+    DancoinBalance as DancoinBalance,
+    DancoinPackage as DancoinPackage,
+    DancoinReservation as DancoinReservation,
+    DancoinTransaction as DancoinTransaction,
+    Invoice as Invoice,
+    LlmModel as LlmModel,
+    Payment as Payment,
+    PaymentEvent as PaymentEvent,
+    Subscription as Subscription,
+    TariffPlan as TariffPlan,
+    UsageRecord as UsageRecord,
+)
 from ai_seller_core.persistence.application_models import (
     AuditLog as AuditLog,
 )
