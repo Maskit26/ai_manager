@@ -120,8 +120,8 @@ def test_catalog_constraints_and_atomic_finalization_postgresql() -> None:
             } <= indexes
 
             async with AsyncSession(engine, expire_on_commit=False) as session:
-                account_a = Account(external_id=f"catalog-a-{uuid4()}", status="active")
-                account_b = Account(external_id=f"catalog-b-{uuid4()}", status="active")
+                account_a = Account(status="active")
+                account_b = Account(status="active")
                 session.add_all((account_a, account_b))
                 await session.flush()
                 project_a = Project(

@@ -149,10 +149,7 @@ def test_project_deletion_postgresql_is_retryable_and_removes_orphans() -> None:
             project_id = "project-delete"
             async with AsyncSession(engine, expire_on_commit=False) as session:
                 async with session.begin():
-                    account = Account(
-                        external_id=f"delete-{uuid4()}",
-                        status="active",
-                    )
+                    account = Account(status="active")
                     session.add(account)
                     await session.flush()
                     project = Project(

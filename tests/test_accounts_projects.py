@@ -17,9 +17,19 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from ai_seller_core.core.config import Settings
 from ai_seller_core.dialog.session_service import close_session, open_or_resume_session
+from ai_seller_core.persistence.identity_service import (
+    IdentityConflictError,
+    link_account_identity,
+    link_user_identity,
+    provision_account,
+    provision_user,
+    resolve_account_id,
+    resolve_user_id,
+)
 from ai_seller_core.persistence.models import (
     Account,
     AccountEntitlement,
+    AccountIdentity,
     AccountMembership,
     AgentSlot,
     AuditLog,
@@ -62,6 +72,7 @@ def test_accounts_projects_offline_migration() -> None:
 
     assert "CREATE TABLE accounts" in sql
     assert "CREATE TABLE account_memberships" in sql
+    assert "CREATE TABLE account_identities" in sql
     assert "CREATE TABLE users" in sql
     assert "CREATE TABLE user_identities" in sql
     assert "CREATE TABLE entitlements" in sql
@@ -86,6 +97,9 @@ def test_accounts_projects_offline_migration() -> None:
     assert "fk_account_memberships_user_id_users" in sql
     assert "fk_audit_log_actor_id_users" in sql
     assert "uq_user_identities_provider_external_id" in sql
+    assert "uq_account_identities_provider_external_id" in sql
+    assert "fk_account_identities_account_id_accounts" in sql
+    assert "DROP COLUMN external_id" in sql
     assert "uq_account_memberships_account_user" in sql
     assert "uq_entitlements_account_id" in sql
     assert "uq_tariff_plans_code_version" in sql
@@ -140,7 +154,8 @@ def test_accounts_projects_postgresql_migrations() -> None:
                     sync_connection.execute(
                         text(
                             "INSERT INTO accounts (id, external_id, status) "
-                            "VALUES ('legacy-account', 'legacy-external', 'active')"
+                            "VALUES ('legacy-account', "
+                            "'11111111-1111-4111-8111-111111111111', 'active')"
                         )
                     )
                     sync_connection.execute(
@@ -173,10 +188,19 @@ def test_accounts_projects_postgresql_migrations() -> None:
                 await connection.run_sync(upgrade)
                 assert await connection.scalar(text("SELECT count(*) FROM alembic_version")) == 1
                 assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                    "20261130_users_and_identities"
+                    "20261130_account_identities"
                 )
                 assert (
                     await connection.scalar(select(User.id).where(User.id == "user-1")) == "user-1"
+                )
+                assert (
+                    await connection.scalar(
+                        select(AccountIdentity.external_account_id).where(
+                            AccountIdentity.account_id == "legacy-account",
+                            AccountIdentity.identity_provider == "bitrix",
+                        )
+                    )
+                    == "11111111-1111-4111-8111-111111111111"
                 )
                 assert (
                     await connection.scalar(select(User.status).where(User.id == "legacy-actor"))
@@ -196,6 +220,9 @@ def test_accounts_projects_postgresql_migrations() -> None:
                 )
                 await connection.execute(delete(AuditLog).where(AuditLog.id == "legacy-audit"))
                 await connection.execute(delete(Project).where(Project.id == "legacy-project"))
+                await connection.execute(
+                    delete(AccountIdentity).where(AccountIdentity.account_id == "legacy-account")
+                )
                 await connection.execute(
                     delete(AccountMembership).where(AccountMembership.id == "legacy-member")
                 )
@@ -228,18 +255,104 @@ def test_accounts_projects_postgresql_migrations() -> None:
 
                 await connection.execute(
                     insert(Account),
-                    {"id": "account-1", "external_id": "external-1", "status": "active"},
+                    {"id": "account-1", "status": "active"},
                 )
                 await connection.execute(insert(Project), {**project, "account_id": "account-1"})
                 await connection.execute(
                     insert(Account),
-                    {"id": "account-2", "external_id": "external-2", "status": "active"},
+                    {"id": "account-2", "status": "active"},
                 )
                 await connection.execute(insert(User), {"id": "user-2"})
+                await connection.execute(
+                    insert(AccountIdentity),
+                    [
+                        {
+                            "id": "account-identity-1",
+                            "account_id": "account-1",
+                            "identity_provider": "bitrix",
+                            "external_account_id": "22222222-2222-4222-8222-222222222222",
+                        },
+                        {
+                            "id": "account-identity-2",
+                            "account_id": "account-2",
+                            "identity_provider": "bitrix",
+                            "external_account_id": "33333333-3333-4333-8333-333333333333",
+                        },
+                    ],
+                )
                 await connection.execute(
                     insert(Project),
                     {**project, "id": "project-2", "account_id": "account-2"},
                 )
+                async with AsyncSession(bind=connection, expire_on_commit=False) as session:
+                    async with session.begin():
+                        provisioned_account = await provision_account(
+                            session,
+                            identity_provider="bitrix",
+                            external_account_id="44444444-4444-4444-8444-444444444444",
+                        )
+                        repeated_account = await provision_account(
+                            session,
+                            identity_provider="bitrix",
+                            external_account_id="44444444-4444-4444-8444-444444444444",
+                            status="disabled",
+                        )
+                        assert repeated_account.id == provisioned_account.id
+                        assert repeated_account.status == "active"
+                        await link_account_identity(
+                            session,
+                            account_id=provisioned_account.id,
+                            identity_provider="new-site",
+                            external_account_id="55555555-5555-4555-8555-555555555555",
+                        )
+                        assert (
+                            await resolve_account_id(
+                                session,
+                                identity_provider="new-site",
+                                external_account_id="55555555-5555-4555-8555-555555555555",
+                            )
+                            == provisioned_account.id
+                        )
+                        with pytest.raises(IdentityConflictError):
+                            await link_account_identity(
+                                session,
+                                account_id="account-2",
+                                identity_provider="bitrix",
+                                external_account_id="44444444-4444-4444-8444-444444444444",
+                            )
+
+                        provisioned_user = await provision_user(
+                            session,
+                            identity_provider="bitrix",
+                            external_user_id="66666666-6666-4666-8666-666666666666",
+                        )
+                        repeated_user = await provision_user(
+                            session,
+                            identity_provider="bitrix",
+                            external_user_id="66666666-6666-4666-8666-666666666666",
+                        )
+                        assert repeated_user.id == provisioned_user.id
+                        await link_user_identity(
+                            session,
+                            user_id=provisioned_user.id,
+                            identity_provider="new-site",
+                            external_user_id="77777777-7777-4777-8777-777777777777",
+                        )
+                        assert (
+                            await resolve_user_id(
+                                session,
+                                identity_provider="new-site",
+                                external_user_id="77777777-7777-4777-8777-777777777777",
+                            )
+                            == provisioned_user.id
+                        )
+                        with pytest.raises(IdentityConflictError):
+                            await link_user_identity(
+                                session,
+                                user_id="user-2",
+                                identity_provider="bitrix",
+                                external_user_id="66666666-6666-4666-8666-666666666666",
+                            )
                 await connection.execute(
                     insert(Channel),
                     [
@@ -829,8 +942,13 @@ def test_accounts_projects_postgresql_migrations() -> None:
 
                 for statement, values in (
                     (
-                        insert(Account),
-                        {"id": "account-2", "external_id": "external-1", "status": "active"},
+                        insert(AccountIdentity),
+                        {
+                            "id": "account-identity-duplicate",
+                            "account_id": "account-2",
+                            "identity_provider": "bitrix",
+                            "external_account_id": "22222222-2222-4222-8222-222222222222",
+                        },
                     ),
                     (
                         insert(AccountMembership),
@@ -1014,8 +1132,7 @@ def test_agent_release_lifecycle_postgresql() -> None:
                 await connection.run_sync(upgrade)
                 await connection.execute(
                     text(
-                        "INSERT INTO accounts (id, external_id, status) "
-                        "VALUES ('agent-test-account', 'agent-test-external', 'active')"
+                        "INSERT INTO accounts (id, status) VALUES ('agent-test-account', 'active')"
                     )
                 )
                 await connection.execute(

@@ -118,11 +118,37 @@ def new_id() -> str:
 
 class Account(Base):
     __tablename__ = "accounts"
-    __table_args__ = (UniqueConstraint("external_id", name="uq_accounts_external_id"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    external_id: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class AccountIdentity(Base):
+    __tablename__ = "account_identities"
+    __table_args__ = (
+        UniqueConstraint(
+            "identity_provider",
+            "external_account_id",
+            name="uq_account_identities_provider_external_id",
+        ),
+        Index("ix_account_identities_account_id", "account_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    account_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "accounts.id",
+            name="fk_account_identities_account_id_accounts",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    identity_provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    external_account_id: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class User(Base):

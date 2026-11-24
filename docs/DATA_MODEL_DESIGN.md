@@ -10,7 +10,9 @@
 
 `projects.account_id` ссылается на `accounts.id`. В аккаунтных записях хранится `account_id`; в записях, которые относятся к проекту, но учитываются или оплачиваются на уровне аккаунта, хранятся оба идентификатора — `account_id` и `project_id`. Предлагаемый способ гарантировать их согласованность — составной внешний ключ на `(projects.id, projects.account_id)`.
 
-`account_memberships.user_id` ссылается на canonical пользователя в `users.id` (`ON DELETE RESTRICT`). Таблица `users` хранит минимальный профиль без ПДн: backend-generated `id` (`Text`), `status` (`active`/`disabled`), `created_at` и `updated_at`. Внешние идентификаторы хранятся отдельно в `user_identities`: уникальная пара `(identity_provider, external_user_id)` сопоставляется с `users.id` через FK с `ON DELETE RESTRICT`. Миграция переносит существующие membership IDs в `users`, не меняя их; найденные старые `audit_log.actor_id` импортируются как отключённые users, чтобы сохранить ссылки аудита.
+`accounts.id` и `users.id` — canonical backend IDs. Внешние идентификаторы аккаунтов и пользователей хранятся в отдельных таблицах `account_identities` и `user_identities`; в каждой уникальна пара `(identity_provider, external_*_id)`, а несколько подтверждённых external IDs могут ссылаться на один backend ID. Прежняя `accounts.external_id` переносится в `account_identities` как Bitrix external UUID и удаляется; миграция останавливается, если значение не соответствует формату UUID.
+
+`account_memberships.user_id` ссылается на canonical пользователя в `users.id` (`ON DELETE RESTRICT`). Таблица `users` хранит минимальный профиль без ПДн: backend-generated `id` (`Text`), `status` (`active`/`disabled`), `created_at` и `updated_at`. `user_identities.user_id` также ссылается на `users.id` (`ON DELETE RESTRICT`). Миграция переносит существующие membership IDs в `users`, не меняя их; найденные старые `audit_log.actor_id` импортируются как отключённые users, чтобы сохранить ссылки аудита.
 
 В Bitrix JWT claim `sub` содержит immutable внешний UUID пользователя. Он разрешается через `user_identities`, а в membership и аудит передаётся canonical backend `user_id`. Аутентифицированный автор аудита — nullable FK `audit_log.actor_id → users.id`; системный автор хранится отдельно в `system_actor`. Одновременно задавать оба поля запрещено.
 
@@ -19,6 +21,7 @@
 | Сущность или группа | Владение / ключи изоляции | Связи |
 |---|---|---|
 | `accounts` | Корневая сущность аккаунта | На неё ссылаются `projects` и аккаунтные записи. |
+| `account_identities` | Глобальная: `account_id` | Сопоставляет `(identity_provider, external_account_id)` с canonical `accounts.id`; одному аккаунту могут соответствовать несколько подтверждённых внешних identities. |
 | `users` | Глобальная: `id` | Canonical пользователи без ПДн; состояние `active`/`disabled`; используются членством аккаунта, внешними identity mappings и аудитом. |
 | `user_identities` | Глобальная: `user_id` | Сопоставляет `(identity_provider, external_user_id)` с canonical `users.id`; одному пользователю могут соответствовать несколько подтверждённых внешних identities. |
 | `account_memberships` | Аккаунт: `account_id`, пользователь: `user_id` | Каждая запись принадлежит аккаунту и пользователю. `user_id -> users.id` (`RESTRICT`); уникальность `(account_id, user_id)`; разрешённые роли `owner`/`admin`/`operator`. |
@@ -76,7 +79,8 @@
 
 | Сущность | Требуемые уникальности, внешние ключи и индексы |
 |---|---|
-| `accounts`, `account_memberships` | Уникальность внешнего ID аккаунта; уникальность membership `(account_id, user_id)`; `account_memberships.user_id -> users.id` (`RESTRICT`). |
+| `accounts`, `account_memberships` | `account_memberships.user_id -> users.id` (`RESTRICT`); уникальность membership `(account_id, user_id)`. |
+| `account_identities` | FK `account_id -> accounts.id` (`RESTRICT`); уникальность `(identity_provider, external_account_id)`; индекс по `account_id`. |
 | `users` | PK `id` (`Text`); `CHECK status IN ('active', 'disabled')`; `created_at`/`updated_at` имеют серверный default `now()`. Пользователи отключаются через status, физическое удаление не используется. |
 | `user_identities` | FK `user_id -> users.id` (`RESTRICT`); уникальность `(identity_provider, external_user_id)`; индекс по `user_id`. |
 | `projects` | FK на аккаунт; индекс по `account_id`. |
