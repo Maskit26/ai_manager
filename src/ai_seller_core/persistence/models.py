@@ -125,6 +125,49 @@ class Account(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False)
 
 
+class User(Base):
+    __tablename__ = "users"
+    __table_args__ = (CheckConstraint("status IN ('active', 'disabled')", name="ck_users_status"),)
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True, default=new_id)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="active", server_default="active"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class UserIdentity(Base):
+    __tablename__ = "user_identities"
+    __table_args__ = (
+        UniqueConstraint(
+            "identity_provider",
+            "external_user_id",
+            name="uq_user_identities_provider_external_id",
+        ),
+        Index("ix_user_identities_user_id", "user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("users.id", name="fk_user_identities_user_id_users", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    identity_provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    external_user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class AccountMembership(Base):
     __tablename__ = "account_memberships"
     __table_args__ = (
@@ -133,13 +176,18 @@ class AccountMembership(Base):
             "role IN ('owner', 'admin', 'operator')",
             name="ck_account_memberships_role",
         ),
+        Index("ix_account_memberships_user_id", "user_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     account_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("accounts.id", ondelete="RESTRICT"), nullable=False
     )
-    user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    user_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("users.id", name="fk_account_memberships_user_id_users", ondelete="RESTRICT"),
+        nullable=False,
+    )
     role: Mapped[str] = mapped_column(String(32), nullable=False)
 
 

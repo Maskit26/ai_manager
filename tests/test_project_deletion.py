@@ -19,6 +19,7 @@ from ai_seller_core.persistence.models import (
     Channel,
     Project,
     ProjectDeletionRequest,
+    User,
 )
 from ai_seller_core.persistence.project_deletion import (
     PROJECT_VECTOR_OBJECT_TYPES,
@@ -166,6 +167,8 @@ def test_project_deletion_postgresql_is_retryable_and_removes_orphans() -> None:
                     await session.flush()
                     session.add(Channel(project_id=project_id, channel_id="web"))
                     await session.flush()
+                    session.add(User(id="tenant-admin"))
+                    await session.flush()
 
                     now = datetime.now(UTC)
                     await archive_project(
@@ -178,6 +181,7 @@ def test_project_deletion_postgresql_is_retryable_and_removes_orphans() -> None:
                         session,
                         project_id,
                         now=now - timedelta(days=31),
+                        actor_id="tenant-admin",
                     )
                     request = await archive_project(
                         session,

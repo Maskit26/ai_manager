@@ -164,9 +164,14 @@ class AuditLog(Base):
             name="fk_audit_log_project_account",
             ondelete="RESTRICT",
         ),
+        CheckConstraint(
+            "actor_id IS NULL OR system_actor IS NULL",
+            name="ck_audit_log_actor_source_exclusive",
+        ),
         Index("ix_audit_log_project_time_type", "project_id", "created_at", "action"),
         Index("ix_audit_log_account_time_type", "account_id", "created_at", "action"),
         Index("ix_audit_log_created_at", "created_at"),
+        Index("ix_audit_log_actor_id", "actor_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
@@ -174,7 +179,11 @@ class AuditLog(Base):
         String(100), ForeignKey("accounts.id", ondelete="RESTRICT"), nullable=False
     )
     project_id: Mapped[str | None] = mapped_column(String(100))
-    actor_id: Mapped[str | None] = mapped_column(String(100))
+    actor_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("users.id", name="fk_audit_log_actor_id_users", ondelete="RESTRICT"),
+    )
+    system_actor: Mapped[str | None] = mapped_column(String(100))
     action: Mapped[str] = mapped_column(String(100), nullable=False)
     entity_type: Mapped[str] = mapped_column(String(100), nullable=False)
     entity_id: Mapped[str] = mapped_column(String(100), nullable=False)

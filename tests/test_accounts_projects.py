@@ -22,6 +22,7 @@ from ai_seller_core.persistence.models import (
     AccountEntitlement,
     AccountMembership,
     AgentSlot,
+    AuditLog,
     BackgroundJob,
     Channel,
     ChatMessage,
@@ -40,6 +41,8 @@ from ai_seller_core.persistence.models import (
     Subscription,
     TariffPlan,
     UsageRecord,
+    User,
+    UserIdentity,
 )
 from ai_seller_core.persistence.session_lease import acquire_session_lease, assert_current_fence
 
@@ -59,6 +62,8 @@ def test_accounts_projects_offline_migration() -> None:
 
     assert "CREATE TABLE accounts" in sql
     assert "CREATE TABLE account_memberships" in sql
+    assert "CREATE TABLE users" in sql
+    assert "CREATE TABLE user_identities" in sql
     assert "CREATE TABLE entitlements" in sql
     assert "CREATE TABLE projects" in sql
     assert "CREATE TABLE channels" in sql
@@ -78,6 +83,9 @@ def test_accounts_projects_offline_migration() -> None:
     ):
         assert f"CREATE TABLE {table}" in sql
     assert "FOREIGN KEY(account_id) REFERENCES accounts (id) ON DELETE RESTRICT" in sql
+    assert "fk_account_memberships_user_id_users" in sql
+    assert "fk_audit_log_actor_id_users" in sql
+    assert "uq_user_identities_provider_external_id" in sql
     assert "uq_account_memberships_account_user" in sql
     assert "uq_entitlements_account_id" in sql
     assert "uq_tariff_plans_code_version" in sql
@@ -128,14 +136,70 @@ def test_accounts_projects_postgresql_migrations() -> None:
                 def upgrade(sync_connection) -> None:
                     config = alembic_config()
                     config.attributes["connection"] = sync_connection
+                    command.upgrade(config, "20261129_idempotency_not_null")
+                    sync_connection.execute(
+                        text(
+                            "INSERT INTO accounts (id, external_id, status) "
+                            "VALUES ('legacy-account', 'legacy-external', 'active')"
+                        )
+                    )
+                    sync_connection.execute(
+                        text(
+                            "INSERT INTO account_memberships "
+                            "(id, account_id, user_id, role) "
+                            "VALUES ('legacy-member', 'legacy-account', 'user-1', 'owner')"
+                        )
+                    )
+                    sync_connection.execute(
+                        text(
+                            "INSERT INTO projects "
+                            "(id, account_id, locale, timezone, settings, status) "
+                            "VALUES ('legacy-project', 'legacy-account', 'en', 'UTC', "
+                            "'{}', 'active')"
+                        )
+                    )
+                    sync_connection.execute(
+                        text(
+                            "INSERT INTO audit_log "
+                            "(id, account_id, project_id, actor_id, action, entity_type, "
+                            "entity_id, diff) VALUES ('legacy-audit', 'legacy-account', "
+                            "'legacy-project', 'legacy-actor', 'migration.test', 'project', "
+                            "'legacy-project', '{}'::jsonb)"
+                        )
+                    )
                     command.upgrade(config, "head")
                     command.upgrade(config, "head")
 
                 await connection.run_sync(upgrade)
                 assert await connection.scalar(text("SELECT count(*) FROM alembic_version")) == 1
                 assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                    "20261129_idempotency_not_null"
+                    "20261130_users_and_identities"
                 )
+                assert (
+                    await connection.scalar(select(User.id).where(User.id == "user-1")) == "user-1"
+                )
+                assert (
+                    await connection.scalar(select(User.status).where(User.id == "legacy-actor"))
+                    == "disabled"
+                )
+                assert (
+                    await connection.scalar(
+                        select(AuditLog.actor_id).where(AuditLog.id == "legacy-audit")
+                    )
+                    == "legacy-actor"
+                )
+                assert (
+                    await connection.scalar(
+                        select(AccountMembership.id).where(AccountMembership.id == "legacy-member")
+                    )
+                    == "legacy-member"
+                )
+                await connection.execute(delete(AuditLog).where(AuditLog.id == "legacy-audit"))
+                await connection.execute(delete(Project).where(Project.id == "legacy-project"))
+                await connection.execute(
+                    delete(AccountMembership).where(AccountMembership.id == "legacy-member")
+                )
+                await connection.execute(delete(Account).where(Account.id == "legacy-account"))
                 idempotency_nullability = await connection.execute(
                     text(
                         "SELECT table_name, is_nullable "
@@ -171,6 +235,7 @@ def test_accounts_projects_postgresql_migrations() -> None:
                     insert(Account),
                     {"id": "account-2", "external_id": "external-2", "status": "active"},
                 )
+                await connection.execute(insert(User), {"id": "user-2"})
                 await connection.execute(
                     insert(Project),
                     {**project, "id": "project-2", "account_id": "account-2"},
@@ -190,6 +255,47 @@ def test_accounts_projects_postgresql_migrations() -> None:
                         "account_id": "account-1",
                         "user_id": "user-1",
                         "role": "owner",
+                    },
+                )
+                await connection.execute(
+                    insert(UserIdentity),
+                    [
+                        {
+                            "id": "identity-1",
+                            "user_id": "user-1",
+                            "identity_provider": "bitrix",
+                            "external_user_id": "bitrix-user-1",
+                        },
+                        {
+                            "id": "identity-2",
+                            "user_id": "user-1",
+                            "identity_provider": "new-site",
+                            "external_user_id": "new-site-user-1",
+                        },
+                    ],
+                )
+                await connection.execute(
+                    insert(AuditLog),
+                    {
+                        "id": "audit-user-1",
+                        "account_id": "account-1",
+                        "project_id": "project-1",
+                        "actor_id": "user-1",
+                        "action": "test.user_actor",
+                        "entity_type": "project",
+                        "entity_id": "project-1",
+                    },
+                )
+                await connection.execute(
+                    insert(AuditLog),
+                    {
+                        "id": "audit-system-1",
+                        "account_id": "account-1",
+                        "project_id": "project-1",
+                        "system_actor": "test-worker",
+                        "action": "test.system_actor",
+                        "entity_type": "project",
+                        "entity_id": "project-1",
                     },
                 )
                 await connection.execute(
@@ -742,6 +848,49 @@ def test_accounts_projects_postgresql_migrations() -> None:
                             "account_id": "account-1",
                             "user_id": "user-2",
                             "role": "invalid",
+                        },
+                    ),
+                    (
+                        insert(AccountMembership),
+                        {
+                            "id": "member-unknown-user",
+                            "account_id": "account-1",
+                            "user_id": "unknown-user",
+                            "role": "operator",
+                        },
+                    ),
+                    (
+                        insert(UserIdentity),
+                        {
+                            "id": "identity-duplicate",
+                            "user_id": "user-2",
+                            "identity_provider": "bitrix",
+                            "external_user_id": "bitrix-user-1",
+                        },
+                    ),
+                    (
+                        insert(AuditLog),
+                        {
+                            "id": "audit-unknown-user",
+                            "account_id": "account-1",
+                            "project_id": "project-1",
+                            "actor_id": "unknown-user",
+                            "action": "test.unknown_actor",
+                            "entity_type": "project",
+                            "entity_id": "project-1",
+                        },
+                    ),
+                    (
+                        insert(AuditLog),
+                        {
+                            "id": "audit-ambiguous-actor",
+                            "account_id": "account-1",
+                            "project_id": "project-1",
+                            "actor_id": "user-1",
+                            "system_actor": "test-worker",
+                            "action": "test.ambiguous_actor",
+                            "entity_type": "project",
+                            "entity_id": "project-1",
                         },
                     ),
                     (

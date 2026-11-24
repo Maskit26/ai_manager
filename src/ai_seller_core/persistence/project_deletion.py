@@ -87,6 +87,7 @@ async def archive_project(
     *,
     requested_at: datetime | None = None,
     actor_id: str | None = None,
+    system_actor: str | None = None,
 ) -> ProjectDeletionRequest:
     requested_at = requested_at or datetime.now(UTC)
     project = await session.scalar(
@@ -119,6 +120,7 @@ async def archive_project(
             account_id=project.account_id,
             project_id=project_id,
             actor_id=actor_id,
+            system_actor=system_actor,
             action="project.deletion_requested",
             entity_type="project",
             entity_id=project_id,
@@ -134,6 +136,8 @@ async def restore_project(
     project_id: str,
     *,
     now: datetime | None = None,
+    actor_id: str | None = None,
+    system_actor: str | None = None,
 ) -> bool:
     now = now or datetime.now(UTC)
     project = await session.scalar(
@@ -156,6 +160,8 @@ async def restore_project(
         AuditLog(
             account_id=project.account_id,
             project_id=project_id,
+            actor_id=actor_id,
+            system_actor=system_actor,
             action="project.restored",
             entity_type="project",
             entity_id=project_id,

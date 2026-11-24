@@ -46,6 +46,7 @@ from ai_seller_core.persistence.models import (
     Project,
     ToolExecution,
     UsageCounter,
+    User,
     new_id,
 )
 from ai_seller_core.persistence.retention import purge_expired_activity
@@ -364,6 +365,8 @@ def test_catalog_constraints_and_atomic_finalization_postgresql() -> None:
                     sla_deadline=datetime.now(UTC),
                     status="open",
                 )
+                session.add(User(id="operator-1"))
+                await session.flush()
                 audit_entry = AuditLog(
                     id=new_id(),
                     account_id=account_a.id,

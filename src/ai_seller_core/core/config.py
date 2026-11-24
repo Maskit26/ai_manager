@@ -12,6 +12,12 @@ class Settings(BaseSettings):
     app_env: Literal["development", "test", "staging", "production"] = "development"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     log_format: Literal["json", "text"] = "json"
+    jwt_access_token_ttl_minutes: int = Field(default=15, ge=1, le=15)
+    jwt_issuer: Literal["ai-manager-web"] = "ai-manager-web"
+    jwt_audience: Literal["ai-manager-api"] = "ai-manager-api"
+    jwt_public_keys: dict[str, str] = Field(default_factory=dict)
+    jwt_standalone_enabled: bool = False
+    jwt_standalone_secret: SecretStr | None = None
     database_url: SecretStr
     qdrant_url: AnyHttpUrl | None = None
     qdrant_api_key: SecretStr | None = None
@@ -55,7 +61,7 @@ class Settings(BaseSettings):
             raise ValueError("DATABASE_URL must use the postgresql+asyncpg driver")
         return value
 
-    @field_validator("qdrant_api_key", "secret_encryption_key")
+    @field_validator("qdrant_api_key", "secret_encryption_key", "jwt_standalone_secret")
     @classmethod
     def validate_optional_secrets(cls, value: SecretStr | None) -> SecretStr | None:
         if value is None:
@@ -67,8 +73,30 @@ class Settings(BaseSettings):
             raise ValueError("Configured secrets must not contain placeholders")
         return value
 
+    @field_validator("jwt_public_keys")
+    @classmethod
+    def validate_jwt_public_keys(cls, value: dict[str, str]) -> dict[str, str]:
+        for key_id, public_key in value.items():
+            if not key_id.strip():
+                raise ValueError("JWT public key IDs must not be empty")
+            if not public_key.strip():
+                raise ValueError("JWT public keys must not be empty")
+            if "PRIVATE KEY" in public_key.upper():
+                raise ValueError("JWT_PUBLIC_KEYS must contain public keys only")
+        return value
+
     @model_validator(mode="after")
     def validate_deployment_profile(self) -> "Settings":
+        if self.jwt_standalone_enabled:
+            if self.app_env != "development":
+                raise ValueError("JWT standalone mode is only allowed in development")
+            if self.jwt_standalone_secret is None:
+                raise ValueError(
+                    "JWT_STANDALONE_SECRET is required when standalone mode is enabled"
+                )
+        elif self.jwt_standalone_secret is not None:
+            raise ValueError("JWT_STANDALONE_SECRET requires JWT_STANDALONE_ENABLED")
+
         if self.app_env in {"staging", "production"}:
             if self.qdrant_url is None:
                 raise ValueError(f"QDRANT_URL is required for the {self.app_env} profile")
@@ -76,6 +104,8 @@ class Settings(BaseSettings):
                 raise ValueError(
                     f"SECRET_ENCRYPTION_KEY is required for the {self.app_env} profile"
                 )
+            if not self.jwt_public_keys:
+                raise ValueError(f"JWT_PUBLIC_KEYS is required for the {self.app_env} profile")
         return self
 
 

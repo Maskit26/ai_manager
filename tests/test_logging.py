@@ -7,7 +7,7 @@ from ai_seller_core.core.config import Settings
 from ai_seller_core.core.logging import configure_logging
 
 
-def _settings(**overrides: str) -> Settings:
+def _settings(**overrides: object) -> Settings:
     return Settings(
         _env_file=None,
         database_url="postgresql+asyncpg://user:db-secret@localhost/database",
@@ -83,9 +83,16 @@ def test_json_logging_redacts_secrets_and_omits_unapproved_extras() -> None:
     try:
         output = io.StringIO()
         with redirect_stderr(output):
-            configure_logging("worker", _settings())
+            configure_logging(
+                "worker",
+                _settings(
+                    app_env="development",
+                    jwt_standalone_enabled=True,
+                    jwt_standalone_secret="standalone-secret",
+                ),
+            )
             try:
-                raise RuntimeError("provider rejected token=qdrant-secret")
+                raise RuntimeError("provider rejected token=qdrant-secret standalone-secret")
             except RuntimeError:
                 logging.getLogger("logging-test").exception(
                     "Background job failed",
@@ -104,6 +111,7 @@ def test_json_logging_redacts_secrets_and_omits_unapproved_extras() -> None:
         assert record["queue"] == "inbound_dialog"
         assert record["kind"] == "process_event"
         assert "qdrant-secret" not in rendered
+        assert "standalone-secret" not in rendered
         assert "private-payload" not in rendered
     finally:
         _restore_logging(root_logger, root_handlers, root_level, named_logger_state)
