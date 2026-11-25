@@ -57,9 +57,7 @@ async def finalize_catalog_import(
         if import_record is None:
             raise LookupError(f"Catalog import {import_id} was not found in project {project_id}")
         if import_record.status != "processing":
-            raise CatalogImportFinalizationError(
-                f"Catalog import {import_id} is not processing"
-            )
+            raise CatalogImportFinalizationError(f"Catalog import {import_id} is not processing")
 
         source = await session.scalar(
             select(CatalogSource)
@@ -147,9 +145,7 @@ async def finalize_catalog_import(
             )
             source.is_authoritative = True
             source.status = "active"
-            import_record.status = (
-                "completed_with_errors" if non_critical_errors else "completed"
-            )
+            import_record.status = "completed_with_errors" if non_critical_errors else "completed"
             import_record.completed_at = datetime.now(UTC)
 
     if finalization_error is not None:

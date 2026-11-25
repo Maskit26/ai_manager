@@ -313,9 +313,7 @@ async def commit_turn(
         }
         statement = insert(ChatMessage).values(**values)
         if inbound.external_message_id is not None:
-            statement = statement.on_conflict_do_nothing(
-                constraint="uq_chat_messages_external"
-            )
+            statement = statement.on_conflict_do_nothing(constraint="uq_chat_messages_external")
         inserted_id = await db.scalar(statement.returning(ChatMessage.id))
         if inserted_id is None:
             existing = await db.scalar(
@@ -369,9 +367,7 @@ async def commit_turn(
         project_id=dialog.project_id,
         session_id=dialog.id,
         event_type="dialog.turn_committed",
-        correlation_id=(
-            correlation_id or (outbox[0].correlation_id if outbox else None)
-        ),
+        correlation_id=(correlation_id or (outbox[0].correlation_id if outbox else None)),
         payload={
             "sequence": dialog.version,
             "inbound_message_id": inbound_message.id if inbound_message else None,

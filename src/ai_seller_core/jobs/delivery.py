@@ -43,9 +43,7 @@ class OutboxDelivery:
         outbox_id = str(payload["outbox_id"])
         async with SessionFactory() as session, session.begin():
             message = await session.scalar(
-                select(OutboxMessage)
-                .where(OutboxMessage.id == outbox_id)
-                .with_for_update()
+                select(OutboxMessage).where(OutboxMessage.id == outbox_id).with_for_update()
             )
             if message is None or message.status in {
                 "delivered",
@@ -104,9 +102,7 @@ class OutboxDelivery:
     ) -> None:
         async with SessionFactory() as session, session.begin():
             message = await session.scalar(
-                select(OutboxMessage)
-                .where(OutboxMessage.id == outbox_id)
-                .with_for_update()
+                select(OutboxMessage).where(OutboxMessage.id == outbox_id).with_for_update()
             )
             if message is None:
                 raise LookupError(f"Outbox message {outbox_id!r} does not exist")

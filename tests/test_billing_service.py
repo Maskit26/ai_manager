@@ -90,7 +90,6 @@ def test_billing_service_postgresql_transactions() -> None:
                     insert(Account),
                     {
                         "id": account_id,
-                        "external_id": f"billing-test-{account_id}",
                         "status": "active",
                     },
                 )

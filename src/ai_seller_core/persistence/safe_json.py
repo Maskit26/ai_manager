@@ -64,18 +64,14 @@ def redact_sensitive_data(value: Any, *, mask_personal_data: bool = False) -> An
             str(key): (
                 "[REDACTED]"
                 if _is_sensitive_key(str(key))
-                or (
-                    mask_personal_data
-                    and str(key).casefold().replace("_", "-") in _PERSONAL_KEYS
-                )
+                or (mask_personal_data and str(key).casefold().replace("_", "-") in _PERSONAL_KEYS)
                 else redact_sensitive_data(item, mask_personal_data=mask_personal_data)
             )
             for key, item in value.items()
         }
     if isinstance(value, (list, tuple)):
         return [
-            redact_sensitive_data(item, mask_personal_data=mask_personal_data)
-            for item in value
+            redact_sensitive_data(item, mask_personal_data=mask_personal_data) for item in value
         ]
     if isinstance(value, str):
         value = _SECRET_ASSIGNMENT.sub(r"\1\2[REDACTED]", value)
@@ -122,11 +118,7 @@ class PrivacyRedactedText(RedactedText):
     cache_ok = True
 
     def process_bind_param(self, value: str | None, dialect: Any) -> str | None:
-        return (
-            redact_sensitive_data(value, mask_personal_data=True)
-            if value is not None
-            else None
-        )
+        return redact_sensitive_data(value, mask_personal_data=True) if value is not None else None
 
 
 class PrivacyRedactedJSONB(RedactedJSONB):

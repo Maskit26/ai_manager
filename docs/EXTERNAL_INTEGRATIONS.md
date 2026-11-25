@@ -132,9 +132,14 @@
         {"type": "image", "payload": {"photo_id": 1, "token": "...", "url": "..."}},
         {"type": "contact", "payload": {"vcf_info": "...", "max_info": {...}}},
         {"type": "location", "latitude": 55.7, "longitude": 37.6},
-        {"type": "inline_keyboard", "payload": {"buttons": [[{"type": "callback", "text": "Купить", "payload": "buy_123"}]]}}
+        {
+            "type": "inline_keyboard",
+            "payload": {
+                "buttons": [[{"type": "callback", "text": "Купить", "payload": "buy_123"}]]
+            },
+        },
     ],
-    "markup": [{"type": "link", "from": 0, "length": 10, "url": "https://..."}]
+    "markup": [{"type": "link", "from": 0, "length": 10, "url": "https://..."}],
 }
 
 # → UnifiedEvent (message event; message-specific payload)
@@ -147,14 +152,10 @@
     "attachments": [
         {"type": "image", "url": "..."},
         {"type": "contact", "data": {...}},
-        {"type": "location", "lat": 55.7, "lon": 37.6}
+        {"type": "location", "lat": 55.7, "lon": 37.6},
     ],
     "callback_payload": None,  # заполняется только для message_callback
-    "metadata": {
-        "user_locale": "ru_RU",
-        "seq": 123,
-        "timestamp": 1737500130100
-    }
+    "metadata": {"user_locale": "ru_RU", "seq": 123, "timestamp": 1737500130100},
 }
 ```
 
@@ -172,15 +173,15 @@
             "price": "8990 ₽",
             "buttons": [
                 {"type": "callback", "text": "В корзину", "payload": "add_to_cart:sku_123"},
-                {"type": "link", "text": "Подробнее", "url": "https://shop.ru/product/123"}
-            ]
+                {"type": "link", "text": "Подробнее", "url": "https://shop.ru/product/123"},
+            ],
         }
     ],
     "keyboard": [
         [{"type": "callback", "text": "Другие модели", "payload": "show_more"}],
-        [{"type": "message", "text": "Статус заказа"}]
+        [{"type": "message", "text": "Статус заказа"}],
     ],
-    "parse_mode": "markdown"
+    "parse_mode": "markdown",
 }
 
 # → MAX NewMessageBody
@@ -193,7 +194,7 @@
             "payload": {"url": "https://shop.ru/product/123", "token": "..."},
             "title": "Nike Air Max 270",
             "description": "Размер 42, черный, в наличии — 8990 ₽",
-            "image_url": "https://..."
+            "image_url": "https://...",
         },
         {
             "type": "inline_keyboard",
@@ -202,12 +203,12 @@
                     [{"type": "callback", "text": "В корзину", "payload": "add_to_cart:sku_123"}],
                     [{"type": "link", "text": "Подробнее", "url": "https://shop.ru/product/123"}],
                     [{"type": "callback", "text": "Другие модели", "payload": "show_more"}],
-                    [{"type": "message", "text": "Статус заказа"}]
+                    [{"type": "message", "text": "Статус заказа"}],
                 ]
-            }
-        }
+            },
+        },
     ],
-    "notify": true
+    "notify": true,
 }
 ```
 
@@ -348,17 +349,21 @@ async def max_webhook(channel_id: str, request: Request):
 async def setup_max_webhook(channel: Channel, base_url: str):
     webhook_url = f"{base_url}/api/v1/webhooks/max/{channel.id}"
     secret = generate_secret(32)
-    
+
     async with MaxClient(channel.credentials["bot_token"]) as client:
-        await client.subscribe(webhook_url, secret, update_types=[
-            "message_created",
-            "message_callback",
-            "bot_started",
-            "bot_stopped",
-            "message_edited",
-            "message_removed"
-        ])
-    
+        await client.subscribe(
+            webhook_url,
+            secret,
+            update_types=[
+                "message_created",
+                "message_callback",
+                "bot_started",
+                "bot_stopped",
+                "message_edited",
+                "message_removed",
+            ],
+        )
+
     # Сохраняем secret в credentials (зашифрованный)
     channel.credentials["webhook_secret"] = secret
     channel.webhook_url = webhook_url
@@ -375,14 +380,14 @@ async def setup_max_webhook(channel: Channel, base_url: str):
 async def send_media(max_client: MaxClient, chat_id: int, file_path: Path, media_type: str):
     # 1. Получить URL для загрузки
     upload_url = await max_client.get_upload_url(media_type)
-    
+
     # 2. Загрузить файл
     token = await max_client.upload_file(upload_url["url"], file_path)
-    
+
     # 3. Отправить сообщение с вложением
     attachment_request = {
         "type": media_type,  # image, video, audio, file
-        "payload": {"token": token}
+        "payload": {"token": token},
     }
     await max_client.send_message(chat_id=chat_id, attachments=[attachment_request])
 ```
@@ -682,7 +687,7 @@ Content-Type: application/json
     "created_at": "2022-07-18T20:58:04.528Z",
     "user": {"id": "115568", "type": "Customer"},
     "data": ["Текст сообщения в Markdown"],
-    "seller_id": "7"
+    "seller_id": "7",
 }
 
 # → UnifiedEvent (message event; message-specific payload)
@@ -698,8 +703,8 @@ Content-Type: application/json
         "chat_type": "Buyer_Seller",
         "user_type": "Customer",
         "created_at": "2022-07-18T20:58:04.528Z",
-        "seller_id": "7"
-    }
+        "seller_id": "7",
+    },
 }
 ```
 
@@ -709,15 +714,15 @@ Content-Type: application/json
 # Unified Response (от Dialog Engine)
 {
     "text": "Ваш заказ 123456 в статусе 'На упаковке'. Ожидайте курьера.",
-    "cards": [],           # Ozon не поддерживает
-    "keyboard": None,      # Ozon не поддерживает inline-кнопки
-    "parse_mode": "plain"  # Только plain text
+    "cards": [],  # Ozon не поддерживает
+    "keyboard": None,  # Ozon не поддерживает inline-кнопки
+    "parse_mode": "plain",  # Только plain text
 }
 
 # → Ozon Request Body (POST /v1/chat/send/message)
 {
     "chat_id": "b646d975-0c9c-4872-9f41-8b1e57181063",
-    "text": "Ваш заказ 123456 в статусе 'На упаковке'. Ожидайте курьера."
+    "text": "Ваш заказ 123456 в статусе 'На упаковке'. Ожидайте курьера.",
 }
 
 # Response
@@ -836,9 +841,11 @@ VALUES ('ozon:customer:115568', 'ozon_chat', '115568');
 async def ozon_chat_webhook(channel_id: str, request: Request):
     # 1. Верификация подписи (Ozon отправляет заголовок X-Ozon-Signature)
     secret = channel.credentials.get("webhook_secret")  # настраивается в ЛК Озон
-    if not verify_ozon_signature(request.headers.get("X-Ozon-Signature"), secret, await request.body()):
+    if not verify_ozon_signature(
+        request.headers.get("X-Ozon-Signature"), secret, await request.body()
+    ):
         raise HTTPException(401, "Invalid signature")
-    
+
     # 2. Парсинг уведомления
     try:
         payload = await request.json()
@@ -1165,7 +1172,7 @@ Content-Type: application/json
     "item_id": 1768287444,
     "published_at": "2025-01-22T10:00:00Z",
     "type": "text",
-    "user_id": 7376
+    "user_id": 7376,
 }
 
 # → UnifiedEvent (message event; message-specific payload)
@@ -1182,8 +1189,8 @@ Content-Type: application/json
         "item_id": 1768287444,
         "author_id": 115568,
         "created_at": 1737500130,
-        "published_at": "2025-01-22T10:00:00Z"
-    }
+        "published_at": "2025-01-22T10:00:00Z",
+    },
 }
 ```
 
@@ -1866,7 +1873,7 @@ GET/POST /rest/api/rest.documentation.openapi
     "event_handler_id": "185",
     "data": {"FIELDS": {"ID": "7405"}},
     "ts": "1766047124",
-    "auth": {"domain": "domain.bitrix24.ru", "member_id": "d897...", "application_token": "..."}
+    "auth": {"domain": "domain.bitrix24.ru", "member_id": "d897...", "application_token": "..."},
 }
 
 # → Наш адаптер делает crm.item.get(entityTypeId=1, id=7405)
@@ -1884,13 +1891,13 @@ GET/POST /rest/api/rest.documentation.openapi
         "entity_type": "lead",
         "entity_id": "7405",
         "change_type": "created",
-        "contact_id": None
+        "contact_id": None,
     },
     "metadata": {
         "event_type": "ONCRMLEADADD",
         "portal_domain": "domain.bitrix24.ru",
-        "ts": 1766047124
-    }
+        "ts": 1766047124,
+    },
 }
 ```
 
@@ -1907,9 +1914,9 @@ GET/POST /rest/api/rest.documentation.openapi
             "AUTHOR_ID": "99",
             "MESSAGE": "Привет, интересует товар",
             "MESSAGE_TYPE": "text",
-            "DATE_CREATE": "2025-01-22T10:00:00+03:00"
+            "DATE_CREATE": "2025-01-22T10:00:00+03:00",
         }
-    }
+    },
 }
 
 # → UnifiedEvent (message event; message-specific payload)
@@ -1925,8 +1932,8 @@ GET/POST /rest/api/rest.documentation.openapi
         "chat_id": "chat_678",
         "author_id": 99,
         "message_type": "text",
-        "created_at": "2025-01-22T10:00:00+03:00"
-    }
+        "created_at": "2025-01-22T10:00:00+03:00",
+    },
 }
 ```
 
@@ -1937,30 +1944,47 @@ GET/POST /rest/api/rest.documentation.openapi
 {
     "text": "Здравствуйте! Товар в наличии. Цена 15 000 ₽. Хотите оформить заказ?",
     "cards": [
-        {"title": "Товар", "description": "Характеристики...", "price": "15 000 ₽", "image_url": "https://..."}
+        {
+            "title": "Товар",
+            "description": "Характеристики...",
+            "price": "15 000 ₽",
+            "image_url": "https://...",
+        }
     ],
-    "keyboard": None
+    "keyboard": None,
 }
 
 # → Bitrix IM: im.message.add
-POST /rest/api/im.message.add
+POST / rest / api / im.message.add
 {
     "dialog_id": "chat_678",
     "message": "Здравствуйте! Товар в наличии. Цена 15 000 ₽. Хотите оформить заказ?",
-    "attach": []  # файлы загружены через disk.folder.uploadfile
+    "attach": [],  # файлы загружены через disk.folder.uploadfile
 }
 
 # → Bitrix CRM: создание сделки + товарные позиции
-POST /rest/api/crm.item.add
+POST / rest / api / crm.item.add
 {"entityTypeId": 2, "fields": {"title": "Сделка из чата", "stageId": "NEW", "contactIds": [123]}}
 # Response: {"result": 456}
 
-POST /rest/api/crm.item.productrow.set
-{"ownerId": 456, "ownerType": "D", "productRows": [{"productId": 789, "price": 15000, "quantity": 1}]}
+POST / rest / api / crm.item.productrow.set
+{
+    "ownerId": 456,
+    "ownerType": "D",
+    "productRows": [{"productId": 789, "price": 15000, "quantity": 1}],
+}
 
 # → Таймлайн: лог-запись
-POST /rest/api/crm.timeline.logmessage.add
-{"fields": {"entityTypeId": 2, "entityId": 456, "title": "ИИ-продавец", "text": "Создана сделка из чата", "iconCode": "success"}}
+POST / rest / api / crm.timeline.logmessage.add
+{
+    "fields": {
+        "entityTypeId": 2,
+        "entityId": 456,
+        "title": "ИИ-продавец",
+        "text": "Создана сделка из чата",
+        "iconCode": "success",
+    }
+}
 ```
 
 ---
@@ -2101,12 +2125,13 @@ async def bitrix24_webhook(channel_id: str, request: Request):
     app_token = payload.get("auth", {}).get("application_token")
     if not bitrix_authenticator.verify(channel, app_token, payload):
         raise HTTPException(401, "Invalid Bitrix24 webhook credentials")
-    
+
     # 2. CRM/IM/Tasks — разные event types; только IM-сообщение может
     # инициировать диалог, CRM/task events направляются отдельным handlers.
     events = bitrix_adapter.parse_inbound(payload, dict(request.headers))
     await inbox_service.persist_events_and_jobs(channel, events)
     return bitrix_adapter.webhook_ack()
+
 
 async def route_bitrix_event(channel_id: str, event: str, data: dict, auth: dict):
     if event.startswith("ONCRM"):
@@ -2440,6 +2465,7 @@ from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 from enum import Enum
 
+
 class MessageType(str, Enum):
     TEXT = "text"
     IMAGE = "image"
@@ -2449,15 +2475,16 @@ class MessageType(str, Enum):
     LOCATION = "location"
     CONTACT = "contact"
     STICKER = "sticker"
-    ITEM = "item"           # товар/объявление (Avito, Bitrix)
-    LINK = "link"           # ссылка с превью
-    TEMPLATE = "template"   # шаблон (Ozon)
+    ITEM = "item"  # товар/объявление (Avito, Bitrix)
+    LINK = "link"  # ссылка с превью
+    TEMPLATE = "template"  # шаблон (Ozon)
+
 
 class UnifiedAttachment(BaseModel):
     type: MessageType
-    url: Optional[str] = None           # CDN URL (для входящих)
-    token: Optional[str] = None         # токен для повторной отправки
-    content: Optional[bytes] = None     # бинарник (для исходящих загрузки)
+    url: Optional[str] = None  # CDN URL (для входящих)
+    token: Optional[str] = None  # токен для повторной отправки
+    content: Optional[bytes] = None  # бинарник (для исходящих загрузки)
     filename: Optional[str] = None
     size: Optional[int] = None
     mime_type: Optional[str] = None
@@ -2476,19 +2503,22 @@ class UnifiedAttachment(BaseModel):
     # Для contact
     contact_data: Optional[Dict[str, Any]] = None
 
+
 class UnifiedKeyboard(BaseModel):
     buttons: List[List["UnifiedButton"]] = []
     inline: bool = True
     one_time: bool = False
     resize_keyboard: bool = True
 
+
 class UnifiedButton(BaseModel):
     type: Literal["callback", "url", "text", "contact_request", "location_request", "web_app"]
     text: str
-    payload: Optional[str] = None       # для callback
-    url: Optional[str] = None           # для url
-    web_app_url: Optional[str] = None   # для web_app
+    payload: Optional[str] = None  # для callback
+    url: Optional[str] = None  # для url
+    web_app_url: Optional[str] = None  # для web_app
     web_app_data: Optional[str] = None
+
 
 class MessageMetadata(BaseModel):
     # Канал-специфичные поля
@@ -2498,14 +2528,15 @@ class MessageMetadata(BaseModel):
     created_at: Optional[datetime] = None
     author_id: Optional[str] = None
     author_name: Optional[str] = None
-    author_type: Optional[str] = None   # customer, bot, operator, system
-    chat_type: Optional[str] = None     # dialog, group, channel, open_line
+    author_type: Optional[str] = None  # customer, bot, operator, system
+    chat_type: Optional[str] = None  # dialog, group, channel, open_line
     message_subtype: Optional[str] = None  # forward, reply, edit
     reply_to_message_id: Optional[str] = None
     # Контекст (F30)
     item_context: Optional[Dict[str, Any]] = None  # товар/заказ/страница
     utm: Optional[Dict[str, str]] = None
     start_payload: Optional[str] = None
+
 
 class InboundEventType(str, Enum):
     MESSAGE = "message"
@@ -2521,6 +2552,7 @@ class InboundEventType(str, Enum):
     PROVIDER_NOTIFICATION = "provider_notification"
     UNSUPPORTED = "unsupported"
 
+
 class MessagePayload(BaseModel):
     # Эти поля требуются только для события, содержащего сообщение/обращение.
     session_id: Optional[str] = None
@@ -2533,6 +2565,7 @@ class MessagePayload(BaseModel):
     keyboard: Optional[UnifiedKeyboard] = None
     callback_data: Optional[str] = None
     metadata: MessageMetadata = Field(default_factory=MessageMetadata)
+
 
 class UnifiedEvent(BaseModel):
     # event_id — внутренний ID; provider_event_id — ключ дедупликации, если он предоставлен API.
@@ -2548,6 +2581,7 @@ class UnifiedEvent(BaseModel):
     message: Optional[MessagePayload] = None
     entity: Optional[Dict[str, Any]] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
 
 class IngestResult(BaseModel):
     accepted: bool
@@ -2590,6 +2624,7 @@ class UnifiedCard(BaseModel):
     item_url: Optional[str] = None
     buttons: List[UnifiedButton] = []
 
+
 class UnifiedResponse(BaseModel):
     text: Optional[str] = None
     cards: List[UnifiedCard] = []
@@ -2613,17 +2648,17 @@ class ChannelCapabilities(BaseModel):
     max_message_length: int = 4096
     supports_formatting: bool = False
     supported_formats: List[Literal["markdown", "html", "plain"]] = ["plain"]
-    
+
     # Медиа
     supports_outgoing_media: bool = False
     supported_media_types: List[MessageType] = []
     max_file_size_mb: int = 20
     max_image_megapixels: int = 50
-    
+
     # Карточки/товары
     supports_cards: bool = False
     supports_item_preview: bool = False
-    
+
     # Клавиатуры
     supports_keyboards: bool = False
     supports_inline_keyboards: bool = False
@@ -2634,41 +2669,47 @@ class ChannelCapabilities(BaseModel):
     supports_web_app_buttons: bool = False
     max_buttons_per_row: int = 5
     max_keyboard_rows: int = 10
-    
+
     # Callback
     callback_payload_max_length: int = 1024
-    
+
     # Вебхуки
     supports_webhook: bool = True
     supports_polling: bool = False
     webhook_timeout_seconds: int = 30
     webhook_requires_443: bool = True
     webhook_signature_header: Optional[str] = None
-    
+
     # Сессии
     session_per_user_in_group: bool = True
     supports_typing_indicator: bool = False
     supports_message_edit: bool = False
     supports_message_delete: bool = False
     delete_window_minutes: Optional[int] = None
-    
+
     # Rate limits
     rate_limit_rps: Optional[float] = None
     rate_limit_burst: Optional[int] = None
     rate_limit_headers: List[str] = []
-    
+
     # Авторизация
-    auth_type: Literal["static_token", "api_key_pair", "oauth2_client_credentials", "oauth2_auth_code", "webhook_secret"]
+    auth_type: Literal[
+        "static_token",
+        "api_key_pair",
+        "oauth2_client_credentials",
+        "oauth2_auth_code",
+        "webhook_secret",
+    ]
     required_scopes: List[str] = []
-    
+
     # Подписка/тарифы
     requires_subscription: List[str] = []
     subscription_access_verified: Optional[bool] = None
-    
+
     # Контекст (F30)
     has_native_item_context: bool = False
     item_context_fields: List[str] = []
-    
+
     # Специфичные фичи
     features: Dict[str, Any] = {}
 ```
@@ -2699,6 +2740,7 @@ class ChannelHealthState(str, Enum):
     REQUIRES_SETUP = "requires_setup"
     DISABLED = "disabled"
 
+
 class FailureDomain(str, Enum):
     CREDENTIALS = "credentials"
     PERMISSIONS = "permissions"
@@ -2719,20 +2761,28 @@ class FailureDomain(str, Enum):
 # adapters/base.py
 from typing import Protocol, Optional, Dict, Any, List
 from core.schemas.unified import (
-    UnifiedEvent, UnifiedResponse, UnifiedAttachment,
-    UnifiedKeyboard, MessagePayload, ChannelCapabilities,
-    ChannelResponseConstraints, MessageMetadata
+    UnifiedEvent,
+    UnifiedResponse,
+    UnifiedAttachment,
+    UnifiedKeyboard,
+    MessagePayload,
+    ChannelCapabilities,
+    ChannelResponseConstraints,
+    MessageMetadata,
 )
 from ai_seller_core.channels.models import Channel
+
 
 class CredentialProvider(Protocol):
     async def get_credentials(self, channel: Channel) -> Dict[str, Any]: ...
     async def update_credentials(self, channel: Channel, creds: Dict[str, Any]) -> None: ...
     async def refresh_if_needed(self, channel: Channel) -> bool: ...
 
+
 class TokenManager(Protocol):
     async def get_valid_token(self, channel: Channel) -> str: ...
     async def refresh_token(self, channel: Channel) -> str: ...
+
 
 class SessionResolver(Protocol):
     # Вызывается Event Router только после выбора message/callback handler.
@@ -2740,22 +2790,28 @@ class SessionResolver(Protocol):
     def resolve_customer_id(self, inbound: MessagePayload) -> Optional[str]: ...
     def extract_context(self, inbound: MessagePayload) -> Dict[str, Any]: ...
 
+
 class MediaUploader(Protocol):
-    async def upload(self, channel: Channel, file: bytes, media_type: str, filename: str) -> str: ...
+    async def upload(
+        self, channel: Channel, file: bytes, media_type: str, filename: str
+    ) -> str: ...
     async def get_media_url(self, channel: Channel, token: str) -> str: ...
+
 
 class RateLimiter(Protocol):
     async def acquire(self, channel_type: str, tokens: int = 1) -> None: ...
     def get_limit_info(self, channel_type: str) -> Dict[str, Any]: ...
 
+
 class IdempotencyManager(Protocol):
     async def ingest(self, channel_id: str, event: UnifiedEvent) -> IngestResult: ...
+
 
 class ChannelAdapter(Protocol):
     # Идентификация
     channel_type: str
     capabilities: ChannelCapabilities
-    
+
     # Зависимости (инжектятся через registry)
     credential_provider: CredentialProvider
     token_manager: TokenManager
@@ -2763,29 +2819,41 @@ class ChannelAdapter(Protocol):
     media_uploader: MediaUploader
     rate_limiter: RateLimiter
     idempotency: IdempotencyManager
-    
+
     # Входящие события
-    async def parse_inbound(self, raw_payload: Dict[str, Any], headers: Dict[str, str]) -> List[UnifiedEvent]: ...
+    async def parse_inbound(
+        self, raw_payload: Dict[str, Any], headers: Dict[str, str]
+    ) -> List[UnifiedEvent]: ...
     async def verify_webhook(self, request: Request, channel: Channel) -> bool: ...
-    
+
     # Исходящие сообщения
-    async def send(self, channel: Channel, session_id: str, response: UnifiedResponse, idempotency_key: str) -> Dict[str, Any]: ...
+    async def send(
+        self, channel: Channel, session_id: str, response: UnifiedResponse, idempotency_key: str
+    ) -> Dict[str, Any]: ...
     async def send_typing(self, channel: Channel, session_id: str, action: str) -> None: ...
-    async def edit_message(self, channel: Channel, message_id: str, response: UnifiedResponse) -> bool: ...
+    async def edit_message(
+        self, channel: Channel, message_id: str, response: UnifiedResponse
+    ) -> bool: ...
     async def delete_message(self, channel: Channel, message_id: str) -> bool: ...
-    async def answer_callback(self, channel: Channel, callback_id: str, text: str, show_alert: bool) -> bool: ...
-    
+    async def answer_callback(
+        self, channel: Channel, callback_id: str, text: str, show_alert: bool
+    ) -> bool: ...
+
     # Вебхуки
     async def register_webhook(self, channel: Channel, base_url: str) -> Dict[str, Any]: ...
     async def unregister_webhook(self, channel: Channel) -> bool: ...
     async def get_webhook_info(self, channel: Channel) -> Optional[Dict[str, Any]]: ...
-    
+
     # Медиа
     async def download_media(self, channel: Channel, attachment: UnifiedAttachment) -> bytes: ...
-    
+
     # Утилиты
-    def format_outgoing(self, response: UnifiedResponse, constraints: ChannelResponseConstraints) -> List[Dict[str, Any]]: ...
-    def validate_outgoing(self, response: UnifiedResponse, constraints: ChannelResponseConstraints) -> None: ...
+    def format_outgoing(
+        self, response: UnifiedResponse, constraints: ChannelResponseConstraints
+    ) -> List[Dict[str, Any]]: ...
+    def validate_outgoing(
+        self, response: UnifiedResponse, constraints: ChannelResponseConstraints
+    ) -> None: ...
 ```
 
 ---
@@ -2802,6 +2870,7 @@ from ai_seller_core.channels.service import ChannelService
 from ai_seller_core.inbox.service import InboxService
 
 router = APIRouter()
+
 
 @router.post("/webhooks/{channel_type}/{channel_id}")
 async def generic_webhook(
@@ -2833,10 +2902,15 @@ async def generic_webhook(
         raw_payload = adapter.decode_payload(raw_body, headers)
         events = await adapter.parse_inbound(raw_payload, headers)
     except JSONDecodeError:
-        logger.warning("Invalid webhook JSON", extra={"channel_id": channel_id, "channel_type": channel_type})
+        logger.warning(
+            "Invalid webhook JSON", extra={"channel_id": channel_id, "channel_type": channel_type}
+        )
         raise HTTPException(400, "Invalid JSON payload")
     except ValidationError:
-        logger.warning("Invalid webhook payload", extra={"channel_id": channel_id, "channel_type": channel_type})
+        logger.warning(
+            "Invalid webhook payload",
+            extra={"channel_id": channel_id, "channel_type": channel_type},
+        )
         raise HTTPException(400, "Invalid payload format")
 
     # Inbox insert и durable jobs создаются атомарно; повтор provider_event_id
@@ -2855,6 +2929,7 @@ async def generic_webhook(
 ```python
 # adapters/session_strategy.py
 
+
 class MaxSessionResolver(SessionResolver):
     # Event Router вызывает resolver только для event_type=message/callback
     # и передаёт вложенный MessagePayload.
@@ -2864,18 +2939,19 @@ class MaxSessionResolver(SessionResolver):
         if chat_type == "dialog":
             return f"max:dialog:{inbound.metadata.channel_specific['chat_id']}"
         return f"max:chat:{inbound.metadata.channel_specific['chat_id']}:{inbound.customer_id}"
-    
+
     def resolve_customer_id(self, inbound: MessagePayload) -> str:
         return f"max:{inbound.metadata.author_id}"
+
 
 class OzonSessionResolver(SessionResolver):
     def resolve_session_id(self, inbound: MessagePayload) -> str:
         # Озон: 1 чат = 1 сессия (привязан к posting_number)
         return f"ozon:chat:{inbound.metadata.channel_specific['chat_id']}"
-    
+
     def resolve_customer_id(self, inbound: MessagePayload) -> str:
         return f"ozon:customer:{inbound.metadata.author_id}"
-    
+
     def extract_context(self, inbound: MessagePayload) -> Dict[str, Any]:
         return {
             "posting_number": inbound.metadata.channel_specific.get("posting_number"),
@@ -2883,23 +2959,25 @@ class OzonSessionResolver(SessionResolver):
             "sla_window": inbound.metadata.channel_specific.get("sla_window"),
         }
 
+
 class AvitoSessionResolver(SessionResolver):
     def resolve_session_id(self, inbound: MessagePayload) -> str:
         return f"avito:chat:{inbound.metadata.channel_specific['chat_id']}"
-    
+
     def resolve_customer_id(self, inbound: MessagePayload) -> str:
         return f"avito:customer:{inbound.metadata.author_id}"
-    
+
     def extract_context(self, inbound: MessagePayload) -> Dict[str, Any]:
         # Контекст объявления из Chat.context.value
         return inbound.metadata.item_context or {}
+
 
 class Bitrix24CrmSessionResolver(SessionResolver):
     def resolve_session_id(self, inbound: MessagePayload) -> str:
         entity_type = inbound.metadata.channel_specific.get("entity_type", "lead")
         entity_id = inbound.metadata.channel_specific.get("entity_id")
         return f"bitrix24:crm:{entity_type}:{entity_id}"
-    
+
     def resolve_customer_id(self, inbound: MessagePayload) -> str:
         # Резолвим контакт/компанию через CRM
         contact_id = inbound.metadata.channel_specific.get("contact_id")
@@ -2909,7 +2987,7 @@ class Bitrix24CrmSessionResolver(SessionResolver):
         if company_id:
             return f"bitrix24:company:{company_id}"
         return f"bitrix24:user:{inbound.metadata.author_id}"
-    
+
     def extract_context(self, inbound: MessagePayload) -> Dict[str, Any]:
         return inbound.metadata.item_context or {}
 ```
@@ -2921,39 +2999,46 @@ class Bitrix24CrmSessionResolver(SessionResolver):
 ```python
 # adapters/credential.py
 
+
 class StaticTokenCredentialProvider(CredentialProvider):
     """MAX: простой статический токен"""
+
     async def get_credentials(self, channel: Channel) -> Dict[str, Any]:
         return {"bot_token": channel.credentials["bot_token"]}
 
+
 class ApiKeyPairCredentialProvider(CredentialProvider):
     """Ozon: Client-Id + Api-Key"""
+
     async def get_credentials(self, channel: Channel) -> Dict[str, Any]:
         return {
             "client_id": channel.credentials["client_id"],
             "api_key": channel.credentials["api_key"],
         }
 
+
 class OAuth2ClientCredentialsProvider(CredentialProvider, TokenManager):
     """Avito, Bitrix24 (OAuth приложения): Client Credentials + Refresh"""
-    
+
     async def get_credentials(self, channel: Channel) -> Dict[str, Any]:
         token = await self.get_valid_token(channel)
         return {"access_token": token}
-    
+
     async def get_valid_token(self, channel: Channel) -> str:
         creds = channel.credentials
         if creds.get("expires_at", 0) > time.time() + 60:
             return creds["access_token"]
         return await self.refresh_token(channel)
-    
+
     async def refresh_token(self, channel: Channel) -> str:
         # POST /token с grant_type=refresh_token
         # Обновить channel.credentials
         pass
 
+
 class WebhookSecretCredentialProvider(CredentialProvider):
     """Верификация вебхука по секрету"""
+
     async def verify(self, channel: Channel, request: Request) -> bool:
         secret = channel.credentials.get("webhook_secret")
         if not secret:
@@ -2969,26 +3054,34 @@ class WebhookSecretCredentialProvider(CredentialProvider):
 ```python
 # adapters/media.py
 
+
 class MaxMediaUploader(MediaUploader):
     """3 шага: get_upload_url -> upload file -> token"""
+
     async def upload(self, channel: Channel, file: bytes, media_type: str, filename: str) -> str:
         token = await self._three_step_upload(channel, file, media_type)
         return token
 
+
 class OzonMediaUploader(MediaUploader):
     """Не поддерживается"""
+
     async def upload(self, channel: Channel, file: bytes, media_type: str, filename: str) -> str:
         raise NotImplementedError("Ozon Chat doesn't support media")
 
+
 class AvitoMediaUploader(MediaUploader):
     """2 шага: uploadImages -> image_id -> send"""
+
     async def upload(self, channel: Channel, file: bytes, media_type: str, filename: str) -> str:
         if media_type != "image":
             raise NotImplementedError("Avito only supports images")
         return await self._two_step_upload(channel, file)
 
+
 class Bitrix24MediaUploader(MediaUploader):
     """Disk API: uploadfile -> file_id -> attach"""
+
     async def upload(self, channel: Channel, file: bytes, media_type: str, filename: str) -> str:
         return await self._disk_upload(channel, file, filename)
 ```
@@ -3002,51 +3095,56 @@ class Bitrix24MediaUploader(MediaUploader):
 ```python
 # adapters/converter.py
 
+
 class CapabilityConverter:
     """Конвертер UnifiedResponse -> канал-специфичный формат с graceful degradation"""
-    
+
     def __init__(self, capabilities: ChannelCapabilities):
         self.caps = capabilities
-    
-    def convert(self, response: UnifiedResponse, constraints: ChannelResponseConstraints) -> List[Dict[str, Any]]:
+
+    def convert(
+        self, response: UnifiedResponse, constraints: ChannelResponseConstraints
+    ) -> List[Dict[str, Any]]:
         """Возвращает список сообщений для отправки (может быть несколько)"""
         validate_response(response, constraints)
         messages = []
-        
+
         # 1. Текст
         text = self._prepare_text(response.text)
-        
+
         # 2. Карточки -> деградация
         card_messages = self._convert_cards(response.cards)
-        
+
         # 3. Клавиатура -> деградация
         keyboard = self._convert_keyboard(response.keyboard)
-        
+
         # 4. Медиа
         media_messages = self._convert_media(response.media)
-        
+
         # Сборка
         if text or keyboard:
             messages.append({"text": text, "keyboard": keyboard, "parse_mode": response.parse_mode})
         messages.extend(card_messages)
         messages.extend(media_messages)
-        
+
         return messages
-    
+
     def _prepare_text(self, text: Optional[str]) -> str:
         if not text:
             return ""
         if len(text) > self.caps.max_message_length:
-            raise CapabilityViolation("Response exceeds channel text limit; request correction before delivery")
+            raise CapabilityViolation(
+                "Response exceeds channel text limit; request correction before delivery"
+            )
         return text
-    
+
     def _convert_cards(self, cards: List[UnifiedCard]) -> List[Dict]:
         if not cards or not self.caps.supports_cards:
             # Деградация: карточка -> текст с ссылкой
             return [{"text": self._card_to_text(c)} for c in cards]
         # Нативная поддержка (Avito item, Bitrix product rows)
         return [self._card_to_native(c) for c in cards]
-    
+
     def _convert_keyboard(self, kb: Optional[UnifiedKeyboard]) -> Optional[Dict]:
         if not kb or not self.caps.supports_keyboards:
             return None
@@ -3057,7 +3155,9 @@ class CapabilityConverter:
             for btn in row:
                 if btn.type == "callback" and not self.caps.supports_callback_buttons:
                     # Деградация: callback -> текст с инструкцией
-                    filtered_row.append({"type": "text", "text": f"{btn.text} (напишите: {btn.payload})"})
+                    filtered_row.append(
+                        {"type": "text", "text": f"{btn.text} (напишите: {btn.payload})"}
+                    )
                 elif btn.type == "url" and not self.caps.supports_url_buttons:
                     filtered_row.append({"type": "text", "text": f"{btn.text}: {btn.url}"})
                 else:
@@ -3065,7 +3165,7 @@ class CapabilityConverter:
             if filtered_row:
                 filtered.append(filtered_row)
         return {"buttons": filtered, "inline": kb.inline} if filtered else None
-    
+
     def _card_to_text(self, card: UnifiedCard) -> str:
         parts = [f"📦 {card.title}"]
         if card.description:
@@ -3101,11 +3201,13 @@ RATE_LIMIT_CONFIG = {
     "amocrm": {"rps": 7, "burst": 15, "strategy": "token_bucket"},
 }
 
+
 class RedisTokenBucketRateLimiter(RateLimiter):
     """Опциональная реализация; основная работа MVP не зависит от Redis."""
+
     def __init__(self, redis_client):
         self.redis = redis_client
-    
+
     async def acquire(self, channel_type: str, tokens: int = 1):
         config = RATE_LIMIT_CONFIG.get(channel_type, {"rps": 10, "burst": 20})
         key = f"ratelimit:{channel_type}"
@@ -3119,6 +3221,7 @@ class RedisTokenBucketRateLimiter(RateLimiter):
 
 ```python
 # adapters/idempotency.py
+
 
 class IdempotencyManager:
     # Входящие события: уникальный индекс PostgreSQL
@@ -3145,15 +3248,24 @@ class IdempotencyManager:
 from ai_seller_core.adapters.base import ChannelAdapter
 from ai_seller_core.core.schemas.unified import ChannelCapabilities, MessageType
 
+
 class TelegramAdapter(ChannelAdapter):
     channel_type = "telegram"
-    
+
     capabilities = ChannelCapabilities(
         max_message_length=4096,
         supports_formatting=True,
         supported_formats=["markdown", "html"],
         supports_outgoing_media=True,
-        supported_media_types=[MessageType.IMAGE, MessageType.VIDEO, MessageType.AUDIO, MessageType.FILE, MessageType.STICKER, MessageType.LOCATION, MessageType.CONTACT],
+        supported_media_types=[
+            MessageType.IMAGE,
+            MessageType.VIDEO,
+            MessageType.AUDIO,
+            MessageType.FILE,
+            MessageType.STICKER,
+            MessageType.LOCATION,
+            MessageType.CONTACT,
+        ],
         max_file_size_mb=50,
         supports_cards=False,
         supports_keyboards=True,
@@ -3180,23 +3292,23 @@ class TelegramAdapter(ChannelAdapter):
         required_scopes=[],
         has_native_item_context=False,
     )
-    
+
     async def parse_inbound(self, raw_payload: Dict, headers: Dict) -> List[UnifiedEvent]:
         # Парсинг Telegram Update -> типизированные события, включая non-message updates
         ...
-    
+
     async def verify_webhook(self, request: Request, channel: Channel) -> bool:
         # Проверка X-Telegram-Bot-Api-Secret-Token
         ...
-    
+
     async def send(self, channel: Channel, session_id: str, response: UnifiedResponse) -> Dict:
         # Отправка через Bot API (sendMessage, sendPhoto, etc.)
         ...
-    
+
     async def register_webhook(self, channel: Channel, base_url: str) -> Dict:
         # setWebhook с secret_token
         ...
-    
+
     def format_outgoing(self, response: UnifiedResponse) -> List[Dict]:
         return CapabilityConverter(self.capabilities).convert(response)
 ```
@@ -3208,31 +3320,32 @@ class TelegramAdapter(ChannelAdapter):
 ```python
 # adapters/testing/harness.py
 
+
 class ChannelTestHarness:
     """Базовый класс для тестов адаптеров. Наследуется каждым адаптером."""
-    
+
     adapter_class: type[ChannelAdapter]
     channel_type: str
-    
+
     # Фикстуры (переопределяются в наследнике)
-    inbound_fixtures: List[Dict] = []      # сырые вебхуки
+    inbound_fixtures: List[Dict] = []  # сырые вебхуки
     expected_unified: List[UnifiedEvent] = []
     outbound_cases: List[Tuple[UnifiedResponse, List[Dict]]] = []  # (Unified, expected native)
-    
+
     @pytest.fixture
     def adapter(self):
         return self.adapter_class()
-    
+
     @pytest.mark.parametrize("raw,expected", zip(inbound_fixtures, expected_unified))
     async def test_parse_inbound(self, adapter, raw, expected):
         result = await adapter.parse_inbound(raw, {})
         assert result == expected
-    
+
     @pytest.mark.parametrize("unified,expected_native", outbound_cases)
     async def test_format_outbound(self, adapter, unified, expected_native):
         result = adapter.format_outgoing(unified)
         assert result == expected_native
-    
+
     async def test_roundtrip(self, adapter):
         # Unified -> Native -> Unified
         for unified in self.expected_unified:
@@ -3240,19 +3353,19 @@ class ChannelTestHarness:
             # Мок отправки и получения ответа
             parsed = await adapter.parse_inbound(mock_native_response(native), {})
             assert parsed[0].message.text == unified.message.text
-    
+
     async def test_webhook_verification(self, adapter):
         # Валидный и невалидный секреты
         ...
-    
+
     async def test_rate_limiting(self, adapter):
         # Проверка токен-бакета
         ...
-    
+
     async def test_media_upload(self, adapter):
         # Загрузка разных типов медиа
         ...
-    
+
     async def test_idempotency(self, adapter):
         # Повторный запрос с тем же ключом
         ...

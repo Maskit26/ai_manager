@@ -33,24 +33,12 @@ def upgrade() -> None:
             nullable=False,
         ),
     )
-    op.add_column(
-        "outbox", sa.Column("destination", sa.String(length=200), nullable=True)
-    )
-    op.add_column(
-        "outbox", sa.Column("aggregate_id", sa.String(length=100), nullable=True)
-    )
+    op.add_column("outbox", sa.Column("destination", sa.String(length=200), nullable=True))
+    op.add_column("outbox", sa.Column("aggregate_id", sa.String(length=100), nullable=True))
     op.add_column("outbox", sa.Column("delivery_reason", sa.String(length=100)))
-    op.execute(
-        sa.text(
-            "UPDATE outbox SET destination = channel_id, aggregate_id = session_id"
-        )
-    )
-    op.alter_column(
-        "outbox", "destination", existing_type=sa.String(length=200), nullable=False
-    )
-    op.alter_column(
-        "outbox", "aggregate_id", existing_type=sa.String(length=100), nullable=False
-    )
+    op.execute(sa.text("UPDATE outbox SET destination = channel_id, aggregate_id = session_id"))
+    op.alter_column("outbox", "destination", existing_type=sa.String(length=200), nullable=False)
+    op.alter_column("outbox", "aggregate_id", existing_type=sa.String(length=100), nullable=False)
 
     op.create_unique_constraint(
         "uq_chat_messages_project_session_id",
@@ -153,9 +141,7 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("project_id", "id", name="uq_leads_project_id"),
-        sa.UniqueConstraint(
-            "project_id", "idempotency_key", name="uq_leads_project_idempotency"
-        ),
+        sa.UniqueConstraint("project_id", "idempotency_key", name="uq_leads_project_idempotency"),
     )
     op.create_index(
         "ix_leads_project_status_created",
@@ -189,9 +175,7 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(
-        "ix_lead_items_project_lead", "lead_items", ["project_id", "lead_id"]
-    )
+    op.create_index("ix_lead_items_project_lead", "lead_items", ["project_id", "lead_id"])
 
     op.create_table(
         "escalations",
@@ -217,12 +201,8 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(
-        "ix_escalations_project_status", "escalations", ["project_id", "status"]
-    )
-    op.create_index(
-        "ix_escalations_project_sla", "escalations", ["project_id", "sla_deadline"]
-    )
+    op.create_index("ix_escalations_project_status", "escalations", ["project_id", "status"])
+    op.create_index("ix_escalations_project_sla", "escalations", ["project_id", "sla_deadline"])
 
     op.create_table(
         "audit_log",
@@ -341,9 +321,7 @@ def downgrade() -> None:
     op.drop_table("leads")
     op.drop_table("tool_executions")
     op.drop_index("ix_domain_events_project_time_type", table_name="domain_events")
-    op.drop_constraint(
-        "uq_chat_messages_project_session_id", "chat_messages", type_="unique"
-    )
+    op.drop_constraint("uq_chat_messages_project_session_id", "chat_messages", type_="unique")
 
     op.drop_column("outbox", "delivery_reason")
     op.drop_column("outbox", "aggregate_id")
@@ -351,7 +329,5 @@ def downgrade() -> None:
     op.drop_column("outbox", "kind")
     op.drop_column("inbox", "last_error")
     op.drop_column("inbox", "processed_at")
-    op.drop_index(
-        "ix_background_jobs_status_available_priority", table_name="background_jobs"
-    )
+    op.drop_index("ix_background_jobs_status_available_priority", table_name="background_jobs")
     op.drop_column("background_jobs", "priority")

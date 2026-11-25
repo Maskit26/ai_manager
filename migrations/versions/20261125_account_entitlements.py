@@ -1,7 +1,7 @@
 """Add account entitlements."""
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 revision = "20261125_account_entitlements"
 down_revision = "20261124_catalog_error_retention"

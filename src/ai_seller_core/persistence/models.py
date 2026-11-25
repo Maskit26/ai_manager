@@ -15,6 +15,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
     true,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -153,12 +154,8 @@ class AccountIdentity(Base):
 
 class User(Base):
     __tablename__ = "users"
-    __table_args__ = (CheckConstraint("status IN ('active', 'disabled')", name="ck_users_status"),)
 
     id: Mapped[str] = mapped_column(Text, primary_key=True, default=new_id)
-    status: Mapped[str] = mapped_column(
-        String(16), nullable=False, default="active", server_default="active"
-    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -198,11 +195,26 @@ class AccountMembership(Base):
     __tablename__ = "account_memberships"
     __table_args__ = (
         UniqueConstraint("account_id", "user_id", name="uq_account_memberships_account_user"),
+        UniqueConstraint("id", "account_id", name="uq_account_memberships_id_account_id"),
         CheckConstraint(
             "role IN ('owner', 'admin', 'operator')",
             name="ck_account_memberships_role",
         ),
+        CheckConstraint(
+            "status IN ('active', 'disabled')",
+            name="ck_account_memberships_status",
+        ),
+        CheckConstraint(
+            "role <> 'owner' OR status = 'active'",
+            name="ck_account_memberships_owner_active",
+        ),
         Index("ix_account_memberships_user_id", "user_id"),
+        Index(
+            "uq_account_memberships_one_owner",
+            "account_id",
+            unique=True,
+            postgresql_where=text("role = 'owner'"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -215,6 +227,101 @@ class AccountMembership(Base):
         nullable=False,
     )
     role: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="active", server_default="active"
+    )
+
+
+class ProjectOperator(Base):
+    __tablename__ = "project_operators"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["project_id", "account_id"],
+            ["projects.id", "projects.account_id"],
+            name="fk_project_operators_project_account",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["membership_id", "account_id"],
+            ["account_memberships.id", "account_memberships.account_id"],
+            name="fk_project_operators_membership_account",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "project_id",
+            "membership_id",
+            name="uq_project_operators_project_membership",
+        ),
+        CheckConstraint(
+            "status IN ('active', 'disabled')",
+            name="ck_project_operators_status",
+        ),
+        Index("ix_project_operators_membership_id", "membership_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    account_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    project_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    membership_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="active", server_default="active"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class DialogOperatorAssignment(Base):
+    __tablename__ = "dialog_operator_assignments"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["project_id", "session_id"],
+            ["dialog_sessions.project_id", "dialog_sessions.id"],
+            name="fk_dialog_operator_assignments_project_session",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["project_id", "account_id"],
+            ["projects.id", "projects.account_id"],
+            name="fk_dialog_operator_assignments_project_account",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["membership_id", "account_id"],
+            ["account_memberships.id", "account_memberships.account_id"],
+            name="fk_dialog_operator_assignments_membership_account",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "membership_id",
+            name="uq_dialog_operator_assignments_membership_id",
+        ),
+        Index(
+            "ix_dialog_operator_assignments_account_project",
+            "account_id",
+            "project_id",
+        ),
+    )
+
+    session_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    account_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    project_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    membership_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
 
 
 class AccountEntitlement(Base):

@@ -81,7 +81,6 @@ async def _test_entitlement_access_cache_invalidation_and_slots_postgresql() -> 
             await db.execute(
                 insert(Account).values(
                     id=account_id,
-                    external_id=f"entitlement-test-{account_id}",
                     status="active",
                 )
             )

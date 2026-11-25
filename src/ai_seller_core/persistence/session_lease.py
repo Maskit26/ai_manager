@@ -65,11 +65,7 @@ async def renew_session_lease(
         )
         .with_for_update()
     )
-    if (
-        dialog is None
-        or dialog.lease_owner != lease.owner
-        or dialog.lease_fence != lease.fence
-    ):
+    if dialog is None or dialog.lease_owner != lease.owner or dialog.lease_fence != lease.fence:
         return None
 
     lease_until = datetime.now(UTC) + timedelta(seconds=lease_seconds)
@@ -97,11 +93,7 @@ async def release_session_lease(
         )
         .with_for_update()
     )
-    if (
-        dialog is None
-        or dialog.lease_owner != lease.owner
-        or dialog.lease_fence != lease.fence
-    ):
+    if dialog is None or dialog.lease_owner != lease.owner or dialog.lease_fence != lease.fence:
         return False
     dialog.lease_owner = None
     dialog.lease_until = None
@@ -121,9 +113,5 @@ async def assert_current_fence(
         )
         .with_for_update()
     )
-    if (
-        dialog is None
-        or dialog.lease_owner != lease.owner
-        or dialog.lease_fence != lease.fence
-    ):
+    if dialog is None or dialog.lease_owner != lease.owner or dialog.lease_fence != lease.fence:
         raise RuntimeError("Session lease was fenced by a newer owner")

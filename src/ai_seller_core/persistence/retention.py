@@ -1,6 +1,9 @@
+from datetime import UTC, datetime, timedelta
+
 from sqlalchemy import delete, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai_seller_core.core.config import get_settings
 from ai_seller_core.persistence.catalog_models import CatalogImportError
 from ai_seller_core.persistence.models import (
     AuditLog,
@@ -11,7 +14,15 @@ from ai_seller_core.persistence.models import (
 RETENTION_LOCK_KEY = 0x41494D47524554
 
 
-async def purge_expired_activity(session: AsyncSession) -> tuple[int, int, int]:
+async def purge_expired_activity(
+    session: AsyncSession,
+    *,
+    now: datetime | None = None,
+) -> tuple[int, int, int]:
+    retention_days = get_settings().activity_retention_days
+    if retention_days is None:
+        raise RuntimeError("ACTIVITY_RETENTION_DAYS must be configured before activity purge")
+
     lock_acquired = await session.scalar(
         text("SELECT pg_try_advisory_xact_lock(:lock_key)"),
         {"lock_key": RETENTION_LOCK_KEY},
@@ -19,9 +30,7 @@ async def purge_expired_activity(session: AsyncSession) -> tuple[int, int, int]:
     if not lock_acquired:
         return 0, 0, 0
 
-    cutoff = (
-        await session.execute(text("SELECT CURRENT_TIMESTAMP - INTERVAL '30 days'"))
-    ).scalar_one()
+    cutoff = (now or datetime.now(UTC)) - timedelta(days=retention_days)
     active_project_deletions = select(ProjectDeletionRequest.project_id).where(
         ProjectDeletionRequest.status == "pending"
     )

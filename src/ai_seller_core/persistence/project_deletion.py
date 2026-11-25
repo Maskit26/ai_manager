@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
@@ -5,11 +6,13 @@ from urllib.parse import quote
 
 import httpx
 from sqlalchemy import select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai_seller_core.core.config import get_settings
 from ai_seller_core.persistence.models import AuditLog, Project, ProjectDeletionRequest
 
-PROJECT_DELETION_RETENTION = timedelta(days=30)
+logger = logging.getLogger(__name__)
 PROJECT_VECTOR_OBJECT_TYPES: Sequence[str] = ("kb_chunk", "product")
 
 
@@ -40,10 +43,7 @@ class QdrantProjectVectorStore:
         self.headers = {"api-key": api_key} if api_key else {}
 
     async def delete_project_points(self, project_id: str) -> None:
-        url = (
-            f"{self.base_url}/collections/{self.collection_name}/points/delete"
-            "?wait=true"
-        )
+        url = f"{self.base_url}/collections/{self.collection_name}/points/delete?wait=true"
         for object_type in PROJECT_VECTOR_OBJECT_TYPES:
             response = await self.client.post(
                 url,
@@ -66,9 +66,7 @@ class QdrantProjectVectorStore:
             try:
                 response.raise_for_status()
             except httpx.HTTPError as error:
-                raise ProjectVectorCleanupError(
-                    "Qdrant rejected project point deletion"
-                ) from error
+                raise ProjectVectorCleanupError("Qdrant rejected project point deletion") from error
             try:
                 status = response.json()["result"]["status"]
             except (KeyError, TypeError, ValueError) as error:
@@ -76,9 +74,7 @@ class QdrantProjectVectorStore:
                     "Qdrant returned an invalid point deletion response"
                 ) from error
             if status != "completed":
-                raise ProjectVectorCleanupError(
-                    "Qdrant did not confirm project point deletion"
-                )
+                raise ProjectVectorCleanupError("Qdrant did not confirm project point deletion")
 
 
 async def archive_project(
@@ -140,6 +136,7 @@ async def restore_project(
     system_actor: str | None = None,
 ) -> bool:
     now = now or datetime.now(UTC)
+    retention_days = get_settings().project_deletion_retention_days
     project = await session.scalar(
         select(Project).where(Project.id == project_id).with_for_update()
     )
@@ -149,7 +146,10 @@ async def restore_project(
         or request is None
         or request.status != "pending"
         or project.status != "archived"
-        or request.requested_at + PROJECT_DELETION_RETENTION <= now
+        or (
+            retention_days is not None
+            and request.requested_at + timedelta(days=retention_days) <= now
+        )
     ):
         return False
     previous_status = project.status
@@ -179,7 +179,12 @@ async def purge_due_project_deletions(
     now: datetime | None = None,
 ) -> int:
     now = now or datetime.now(UTC)
-    cutoff = now - PROJECT_DELETION_RETENTION
+    retention_days = get_settings().project_deletion_retention_days
+    if retention_days is None:
+        raise RuntimeError(
+            "PROJECT_DELETION_RETENTION_DAYS must be configured before project purge"
+        )
+    cutoff = now - timedelta(days=retention_days)
     requests = (
         await session.scalars(
             select(ProjectDeletionRequest)
@@ -194,22 +199,31 @@ async def purge_due_project_deletions(
 
     purged = 0
     for request in requests:
-        project_status = await session.scalar(
-            select(Project.status)
-            .where(Project.id == request.project_id)
-            .with_for_update()
-        )
-        if project_status is not None and project_status != "archived":
-            raise RuntimeError("A pending project deletion requires an archived project")
-        if not await _retention_elapsed(session, request.project_id, cutoff):
+        completed = False
+        try:
+            async with session.begin_nested():
+                project_status = await session.scalar(
+                    select(Project.status).where(Project.id == request.project_id).with_for_update()
+                )
+                if project_status is not None and project_status != "archived":
+                    raise RuntimeError("A pending project deletion requires an archived project")
+                if not await _retention_elapsed(session, request.project_id, cutoff):
+                    continue
+                if vector_store is None:
+                    raise ProjectVectorCleanupError("Qdrant is not configured")
+                await vector_store.delete_project_points(request.project_id)
+                await _delete_project_rows(session, request.project_id)
+                request.status = "completed"
+                request.completed_at = now
+                completed = True
+        except (ProjectVectorCleanupError, SQLAlchemyError, RuntimeError):
+            logger.exception(
+                "Project deletion purge failed; request remains pending: %s",
+                request.project_id,
+            )
             continue
-        if vector_store is None:
-            raise ProjectVectorCleanupError("Qdrant is not configured")
-        await vector_store.delete_project_points(request.project_id)
-        await _delete_project_rows(session, request.project_id)
-        request.status = "completed"
-        request.completed_at = now
-        purged += 1
+        if completed:
+            purged += 1
     return purged
 
 
@@ -223,6 +237,11 @@ async def _retention_elapsed(
         ("audit_log", "created_at"),
         ("llm_calls", "created_at"),
         ("usage_counters", "updated_at"),
+        ("chat_messages", "created_at"),
+        ("dialog_sessions", "last_activity_at"),
+        ("inbox", "received_at"),
+        ("outbox", "created_at"),
+        ("tool_executions", "started_at"),
     )
     for table, column in timestamps:
         has_recent_rows = await session.scalar(

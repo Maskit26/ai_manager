@@ -73,9 +73,7 @@ class _JsonFormatter(_BaseFormatter):
 class _TextFormatter(_BaseFormatter):
     def format(self, record: logging.LogRecord) -> str:
         fields = self._fields(record)
-        context = " ".join(
-            f"{name}={fields[name]}" for name in _CONTEXT_FIELDS if name in fields
-        )
+        context = " ".join(f"{name}={fields[name]}" for name in _CONTEXT_FIELDS if name in fields)
         message = (
             f"{fields['timestamp']} {fields['level']} "
             f"process={fields['process']} logger={fields['logger']} "

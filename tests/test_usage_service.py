@@ -201,7 +201,6 @@ def test_usage_record_counter_and_settlement_postgresql() -> None:
                     insert(Account),
                     {
                         "id": account_id,
-                        "external_id": f"usage-test-{account_id}",
                         "status": "active",
                     },
                 )

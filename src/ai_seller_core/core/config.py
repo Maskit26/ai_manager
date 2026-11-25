@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     api_port: int = Field(default=8000, ge=1, le=65535)
     job_poll_interval_seconds: float = 1.0
     job_lease_seconds: int = 60
+    project_deletion_retention_days: int | None = Field(default=None, ge=1)
+    activity_retention_days: int | None = Field(default=None, ge=1)
 
     model_config = SettingsConfigDict(
         env_file=".env",

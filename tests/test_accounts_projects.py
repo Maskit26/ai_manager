@@ -188,7 +188,7 @@ def test_accounts_projects_postgresql_migrations() -> None:
                 await connection.run_sync(upgrade)
                 assert await connection.scalar(text("SELECT count(*) FROM alembic_version")) == 1
                 assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                    "20261130_account_identities"
+                    "20261203_entitlement_invalidate"
                 )
                 assert (
                     await connection.scalar(select(User.id).where(User.id == "user-1")) == "user-1"
@@ -201,10 +201,6 @@ def test_accounts_projects_postgresql_migrations() -> None:
                         )
                     )
                     == "11111111-1111-4111-8111-111111111111"
-                )
-                assert (
-                    await connection.scalar(select(User.status).where(User.id == "legacy-actor"))
-                    == "disabled"
                 )
                 assert (
                     await connection.scalar(

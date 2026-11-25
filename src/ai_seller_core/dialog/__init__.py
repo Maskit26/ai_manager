@@ -1,4 +1,5 @@
 """Dialog runtime and application contracts."""
+
 from ai_seller_core.dialog.runtime import (
     DialogRuntime,
     InboundMessage,

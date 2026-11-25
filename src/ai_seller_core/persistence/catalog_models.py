@@ -71,8 +71,7 @@ class CatalogImport(Base):
     __table_args__ = (
         UniqueConstraint("project_id", "id", name="uq_catalog_imports_project_id"),
         CheckConstraint(
-            "status IN ('pending', 'processing', 'completed', "
-            "'completed_with_errors', 'failed')",
+            "status IN ('pending', 'processing', 'completed', 'completed_with_errors', 'failed')",
             name="ck_catalog_imports_status",
         ),
         CheckConstraint(

@@ -22,6 +22,7 @@ from ai_seller_core.dialog.session_service import (
 from ai_seller_core.persistence.base import SessionFactory
 from ai_seller_core.persistence.models import ChatMessage, InboxEvent
 from ai_seller_core.persistence.session_lease import (
+    SessionLease,
     release_session_lease,
     renew_session_lease,
 )
@@ -44,6 +45,25 @@ class EventDecoder(Protocol):
 
 
 RuntimeFactory = Callable[[str, str], DialogRuntime]
+
+
+async def _reset_inbox_event_for_retry(
+    inbox_event_id: str,
+    lease: SessionLease,
+    *,
+    reason: str,
+) -> None:
+    async with SessionFactory() as db, db.begin():
+        released = await release_session_lease(db, lease=lease)
+        if not released:
+            return
+        event = await db.scalar(
+            select(InboxEvent).where(InboxEvent.id == inbox_event_id).with_for_update()
+        )
+        if event is not None and event.status == "processing":
+            event.status = "received"
+            event.processed_at = None
+            event.last_error = reason
 
 
 def build_inbound_event_handler(
@@ -72,9 +92,7 @@ def build_inbound_event_handler(
 
         async with SessionFactory() as db, db.begin():
             event = await db.scalar(
-                select(InboxEvent)
-                .where(InboxEvent.id == inbox_event_id)
-                .with_for_update()
+                select(InboxEvent).where(InboxEvent.id == inbox_event_id).with_for_update()
             )
             if event is None:
                 raise LookupError(f"Inbox event {inbox_event_id!r} does not exist")
@@ -99,8 +117,6 @@ def build_inbound_event_handler(
                 **event.normalized_event,
                 "text": sanitized_text,
             }
-
-
 
             event.status = "processing"
             event.processed_at = None
@@ -135,44 +151,63 @@ def build_inbound_event_handler(
                 lease_seconds=lease_seconds,
             )
         except asyncio.CancelledError:
-            async with SessionFactory() as db, db.begin():
-                await release_session_lease(db, lease=context.lease)
+            await _reset_inbox_event_for_retry(
+                inbox_event_id,
+                context.lease,
+                reason="processing_cancelled",
+            )
             raise
         except Exception:
-            async with SessionFactory() as db, db.begin():
-                await release_session_lease(db, lease=context.lease)
+            await _reset_inbox_event_for_retry(
+                inbox_event_id,
+                context.lease,
+                reason="processing_failed",
+            )
             raise
 
-        async with SessionFactory() as db, db.begin():
-            event = await db.get(InboxEvent, inbox_event_id)
-            if event is None:
-                raise LookupError(f"Inbox event {inbox_event_id!r} does not exist")
+        try:
+            async with SessionFactory() as db, db.begin():
+                event = await db.get(InboxEvent, inbox_event_id)
+                if event is None:
+                    raise LookupError(f"Inbox event {inbox_event_id!r} does not exist")
 
-            inbound = MessageInput(
-                role="user",
-                content={"text": sanitized_text},
-                external_message_id=command.external_message_id,
-            )
-            outbound = (
-                MessageInput(role="assistant", content={"text": response_text}),
-            )
-            outbox = (
-                OutboundIntent(
-                    payload={"text": response_text},
-                    idempotency_key=f"inbox-reply:{inbox_event_id}",
+                inbound = MessageInput(
+                    role="user",
+                    content={"text": sanitized_text},
+                    external_message_id=command.external_message_id,
+                )
+                outbound = (MessageInput(role="assistant", content={"text": response_text}),)
+                outbox = (
+                    OutboundIntent(
+                        payload={"text": response_text},
+                        idempotency_key=f"inbox-reply:{inbox_event_id}",
+                        correlation_id=event.correlation_id,
+                    ),
+                )
+                await commit_turn(
+                    db,
+                    lease=context.lease,
+                    inbound=inbound,
+                    outbound=outbound,
+                    outbox=outbox,
                     correlation_id=event.correlation_id,
-                ),
+                )
+                event.status = "processed"
+                event.processed_at = datetime.now(UTC)
+        except asyncio.CancelledError:
+            await _reset_inbox_event_for_retry(
+                inbox_event_id,
+                context.lease,
+                reason="commit_cancelled",
             )
-            await commit_turn(
-                db,
-                lease=context.lease,
-                inbound=inbound,
-                outbound=outbound,
-                outbox=outbox,
-                correlation_id=event.correlation_id,
+            raise
+        except Exception:
+            await _reset_inbox_event_for_retry(
+                inbox_event_id,
+                context.lease,
+                reason="commit_failed",
             )
-            event.status = "processed"
-            event.processed_at = datetime.now(UTC)
+            raise
 
     return process
 
@@ -193,14 +228,17 @@ async def _load_history(
             .limit(limit)
         )
     ).all()
-    return tuple(
-        {
-            "role": message.role,
-            "content": message.content.get("text", ""),
-        }
-        for message in reversed(rows)
-        if message.role in {"user", "assistant"}
-    )
+    history = []
+    for message in reversed(rows):
+        if message.role not in {"user", "assistant"}:
+            continue
+        if not isinstance(message.content, dict):
+            raise ValueError(f"Chat message {message.id!r} content must be an object")
+        text_content = message.content.get("text")
+        if not isinstance(text_content, str):
+            raise ValueError(f"Chat message {message.id!r} must contain text content")
+        history.append({"role": message.role, "content": text_content})
+    return tuple(history)
 
 
 async def _respond_with_heartbeat(

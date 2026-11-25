@@ -75,9 +75,7 @@ def _reject_excluded_fields(value: Any) -> None:
                 or normalized_key.startswith("catalog_")
                 or normalized_key.startswith("knowledge_base")
             ):
-                raise ValueError(
-                    f"Agent configuration cannot contain excluded field {key!r}"
-                )
+                raise ValueError(f"Agent configuration cannot contain excluded field {key!r}")
             _reject_excluded_fields(nested_value)
     elif isinstance(value, list):
         for item in value:
@@ -102,9 +100,7 @@ async def save_agent_draft(
 ) -> AgentDraft:
     _require_transaction(db)
     _validate_config(config)
-    agent = await db.scalar(
-        select(Agent).where(Agent.project_id == project_id).with_for_update()
-    )
+    agent = await db.scalar(select(Agent).where(Agent.project_id == project_id).with_for_update())
     if agent is None:
         raise LookupError(f"No agent exists for project {project_id!r}")
 
@@ -127,9 +123,7 @@ async def save_agent_draft(
 
 async def publish_agent_release(db: AsyncSession, *, project_id: str) -> AgentRelease:
     _require_transaction(db)
-    agent = await db.scalar(
-        select(Agent).where(Agent.project_id == project_id).with_for_update()
-    )
+    agent = await db.scalar(select(Agent).where(Agent.project_id == project_id).with_for_update())
     if agent is None:
         raise LookupError(f"No agent exists for project {project_id!r}")
 
@@ -171,9 +165,7 @@ async def rollback_agent_release(
     release_id: str,
 ) -> None:
     _require_transaction(db)
-    agent = await db.scalar(
-        select(Agent).where(Agent.project_id == project_id).with_for_update()
-    )
+    agent = await db.scalar(select(Agent).where(Agent.project_id == project_id).with_for_update())
     if agent is None:
         raise LookupError(f"No agent exists for project {project_id!r}")
 

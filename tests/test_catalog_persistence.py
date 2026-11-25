@@ -2,6 +2,7 @@ import asyncio
 import os
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -17,6 +18,7 @@ from ai_seller_core.dialog.session_service import open_or_resume_session
 from ai_seller_core.jobs.inbox import ingest_channel_event
 from ai_seller_core.jobs.outbox import enqueue_outbound_message
 from ai_seller_core.jobs.repository import enqueue_job
+from ai_seller_core.persistence import retention
 from ai_seller_core.persistence.catalog import (
     CatalogImportFinalizationError,
     finalize_catalog_import,
@@ -52,7 +54,12 @@ from ai_seller_core.persistence.models import (
 from ai_seller_core.persistence.retention import purge_expired_activity
 
 
-def test_catalog_constraints_and_atomic_finalization_postgresql() -> None:
+def test_catalog_constraints_and_atomic_finalization_postgresql(monkeypatch) -> None:
+    monkeypatch.setattr(
+        retention,
+        "get_settings",
+        lambda: SimpleNamespace(activity_retention_days=30),
+    )
     test_database_url = os.environ.pop("DATABASE_URL", None)
     try:
         try:
@@ -89,8 +96,7 @@ def test_catalog_constraints_and_atomic_finalization_postgresql() -> None:
                     row[0]
                     for row in (
                         await connection.exec_driver_sql(
-                            "SELECT indexname FROM pg_indexes "
-                            "WHERE schemaname = current_schema()"
+                            "SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()"
                         )
                     )
                 }
@@ -358,15 +364,16 @@ def test_catalog_constraints_and_atomic_finalization_postgresql() -> None:
                 escalation = Escalation(
                     id=new_id(),
                     project_id=project_a_id,
+                    account_id=account_a.id,
                     session_id=session_context.session_id,
                     reason="human_requested",
                     summary="Customer requested an operator",
-                    assignee="operator-1",
+                    assignee_membership_id=None,
                     sla_deadline=datetime.now(UTC),
                     status="open",
                 )
-                session.add(User(id="operator-1"))
                 await session.flush()
+                session.add(User(id="operator-1"))
                 audit_entry = AuditLog(
                     id=new_id(),
                     account_id=account_a.id,
@@ -439,18 +446,14 @@ def test_catalog_constraints_and_atomic_finalization_postgresql() -> None:
                     correlation_id="retention-retained",
                     payload={},
                 )
-                session.add_all(
-                    (expired_audit, retained_audit, expired_event, retained_event)
-                )
+                session.add_all((expired_audit, retained_audit, expired_event, retained_event))
                 await session.flush()
                 assert await purge_expired_activity(session) == (1, 1, 0)
                 remaining_event_ids = set(
                     (
                         await session.scalars(
                             select(DomainEvent.id).where(
-                                DomainEvent.id.in_(
-                                    (expired_event.id, retained_event.id)
-                                )
+                                DomainEvent.id.in_((expired_event.id, retained_event.id))
                             )
                         )
                     ).all()
@@ -459,9 +462,7 @@ def test_catalog_constraints_and_atomic_finalization_postgresql() -> None:
                     (
                         await session.scalars(
                             select(AuditLog.id).where(
-                                AuditLog.id.in_(
-                                    (expired_audit.id, retained_audit.id)
-                                )
+                                AuditLog.id.in_((expired_audit.id, retained_audit.id))
                             )
                         )
                     ).all()
@@ -516,9 +517,7 @@ def test_catalog_constraints_and_atomic_finalization_postgresql() -> None:
                 assert audit_entry.diff["password"] == "[REDACTED]"
                 assert audit_entry.diff["email"] == "[REDACTED]"
                 assert audit_entry.diff["note"] == "Call [REDACTED_PHONE]"
-                assert domain_event.payload["message"] == (
-                    "Contact [REDACTED_EMAIL]"
-                )
+                assert domain_event.payload["message"] == ("Contact [REDACTED_EMAIL]")
 
                 with pytest.raises(IntegrityError):
                     async with session.begin_nested():
@@ -737,9 +736,7 @@ def test_catalog_constraints_and_atomic_finalization_postgresql() -> None:
                     (
                         await session.scalars(
                             select(CatalogImportError.id).where(
-                                CatalogImportError.id.in_(
-                                    (expired_error.id, retained_error.id)
-                                )
+                                CatalogImportError.id.in_((expired_error.id, retained_error.id))
                             )
                         )
                     ).all()
@@ -779,9 +776,7 @@ def test_catalog_constraints_and_atomic_finalization_postgresql() -> None:
                             ],
                         )
 
-                    failed_import = await session.get(
-                        CatalogImport, unsafe_import_id
-                    )
+                    failed_import = await session.get(CatalogImport, unsafe_import_id)
                     unchanged_old = await session.scalar(
                         select(Product).where(
                             Product.project_id == project_a_id,

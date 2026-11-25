@@ -15,6 +15,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -133,21 +134,41 @@ class Escalation(Base):
     __tablename__ = "escalations"
     __table_args__ = (
         ForeignKeyConstraint(
+            ["project_id", "account_id"],
+            ["projects.id", "projects.account_id"],
+            name="fk_escalations_project_account",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
             ["project_id", "session_id"],
             ["dialog_sessions.project_id", "dialog_sessions.id"],
             name="fk_escalations_project_session",
             ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ["assignee_membership_id", "account_id"],
+            ["account_memberships.id", "account_memberships.account_id"],
+            name="fk_escalations_assignee_membership_account",
+            ondelete="RESTRICT",
+        ),
         Index("ix_escalations_project_status", "project_id", "status"),
         Index("ix_escalations_project_sla", "project_id", "sla_deadline"),
+        Index(
+            "uq_escalations_open_project_session",
+            "project_id",
+            "session_id",
+            unique=True,
+            postgresql_where=text("status = 'open'"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
     project_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    account_id: Mapped[str] = mapped_column(String(36), nullable=False)
     session_id: Mapped[str] = mapped_column(String(100), nullable=False)
     reason: Mapped[str] = mapped_column(String(200), nullable=False)
     summary: Mapped[str] = mapped_column(Text, nullable=False)
-    assignee: Mapped[str | None] = mapped_column(String(100))
+    assignee_membership_id: Mapped[str | None] = mapped_column(String(36))
     sla_deadline: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     created_at: Mapped[datetime] = mapped_column(

@@ -28,8 +28,7 @@ def upgrade() -> None:
     op.create_check_constraint(
         "ck_dialog_sessions_close_reason",
         "dialog_sessions",
-        "close_reason IS NULL OR close_reason IN "
-        "('max_chat_closed', 'idle_ttl', 'manual')",
+        "close_reason IS NULL OR close_reason IN ('max_chat_closed', 'idle_ttl', 'manual')",
     )
     op.create_check_constraint(
         "ck_dialog_sessions_reopen_count",

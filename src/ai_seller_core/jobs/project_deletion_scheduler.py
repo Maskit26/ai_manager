@@ -18,13 +18,17 @@ logger = logging.getLogger(__name__)
 
 async def run_once() -> tuple[int, tuple[int, int, int]]:
     settings = get_settings()
+    if settings.project_deletion_retention_days is None:
+        raise RuntimeError(
+            "PROJECT_DELETION_RETENTION_DAYS must be configured before running cleanup"
+        )
+    if settings.activity_retention_days is None:
+        raise RuntimeError("ACTIVITY_RETENTION_DAYS must be configured before running cleanup")
     async with database_lifespan(settings):
         async with AsyncExitStack() as stack:
             vector_store: ProjectVectorStore | None = None
             if settings.qdrant_url is not None:
-                client = await stack.enter_async_context(
-                    httpx.AsyncClient(timeout=10.0)
-                )
+                client = await stack.enter_async_context(httpx.AsyncClient(timeout=10.0))
                 vector_store = QdrantProjectVectorStore(
                     client,
                     qdrant_url=str(settings.qdrant_url),
@@ -35,12 +39,14 @@ async def run_once() -> tuple[int, tuple[int, int, int]]:
                         else None
                     ),
                 )
-            async with SessionFactory() as session, session.begin():
-                purged_projects = await purge_due_project_deletions(
-                    session,
-                    vector_store,
-                )
-                expired_activity = await purge_expired_activity(session)
+            async with SessionFactory() as session:
+                async with session.begin():
+                    purged_projects = await purge_due_project_deletions(
+                        session,
+                        vector_store,
+                    )
+                async with session.begin():
+                    expired_activity = await purge_expired_activity(session)
     logger.info(
         "Project deletion maintenance completed",
         extra={

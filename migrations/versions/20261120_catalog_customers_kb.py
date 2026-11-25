@@ -98,8 +98,7 @@ def upgrade() -> None:
         ),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
         sa.CheckConstraint(
-            "status IN ('pending', 'processing', 'completed', "
-            "'completed_with_errors', 'failed')",
+            "status IN ('pending', 'processing', 'completed', 'completed_with_errors', 'failed')",
             name="ck_catalog_imports_status",
         ),
         sa.CheckConstraint(
@@ -121,12 +120,8 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name="pk_catalog_imports"),
         sa.UniqueConstraint("project_id", "id", name="uq_catalog_imports_project_id"),
     )
-    op.create_index(
-        "ix_catalog_imports_source", "catalog_imports", ["project_id", "source_id"]
-    )
-    op.create_index(
-        "ix_catalog_imports_status", "catalog_imports", ["project_id", "status"]
-    )
+    op.create_index("ix_catalog_imports_source", "catalog_imports", ["project_id", "source_id"])
+    op.create_index("ix_catalog_imports_status", "catalog_imports", ["project_id", "status"])
     op.create_index(
         "ix_catalog_imports_created_at", "catalog_imports", ["project_id", "created_at"]
     )
@@ -414,9 +409,7 @@ def upgrade() -> None:
             name="uq_kb_chunks_document_index",
         ),
     )
-    op.create_index(
-        "ix_kb_chunks_document", "kb_chunks", ["project_id", "document_id"]
-    )
+    op.create_index("ix_kb_chunks_document", "kb_chunks", ["project_id", "document_id"])
 
 
 def downgrade() -> None:

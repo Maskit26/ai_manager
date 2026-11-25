@@ -332,7 +332,6 @@ def test_payment_workflow_postgresql() -> None:
                     insert(Account),
                     {
                         "id": account_id,
-                        "external_id": f"payment-test-{account_id}",
                         "status": "active",
                     },
                 )
