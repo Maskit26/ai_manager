@@ -7,8 +7,9 @@ from fastapi import FastAPI
 from pydantic import ValidationError
 
 from ai_seller_core.api.auth import validate_public_keyring
-from ai_seller_core.api.error_handlers import handle_unexpected_error
+from ai_seller_core.api.error_handlers import register_exception_handlers
 from ai_seller_core.api.health import router as health_router
+from ai_seller_core.api.v1.router import router as v1_router
 from ai_seller_core.core.config import get_settings
 from ai_seller_core.core.logging import configure_logging
 from ai_seller_core.persistence.base import database_lifespan
@@ -46,9 +47,19 @@ def create_app() -> FastAPI:
         configure_logging("api")
         logger.exception("API configuration validation failed")
         raise
-    app = FastAPI(title=settings.app_name, lifespan=lifespan, debug=False)
-    app.add_exception_handler(Exception, handle_unexpected_error)
+    app = FastAPI(
+        title=settings.app_name,
+        lifespan=lifespan,
+        debug=False,
+        openapi_tags=[
+            {"name": "health", "description": "Service health and readiness."},
+            {"name": "account", "description": "Current account context."},
+            {"name": "projects", "description": "Tenant-scoped project reads."},
+        ],
+    )
+    register_exception_handlers(app)
     app.include_router(health_router)
+    app.include_router(v1_router)
     return app
 
 
