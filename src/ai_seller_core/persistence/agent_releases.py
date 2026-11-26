@@ -4,6 +4,8 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai_seller_core.persistence.access_policy import Principal, ProjectPermission
+from ai_seller_core.persistence.authorization_service import require_project_access
 from ai_seller_core.persistence.models import Agent, AgentDraft, AgentRelease
 
 RELEASE_CONFIG_KEYS = frozenset(
@@ -82,8 +84,9 @@ def _reject_excluded_fields(value: Any) -> None:
             _reject_excluded_fields(item)
 
 
-async def create_agent(db: AsyncSession, *, project_id: str) -> Agent:
+async def create_agent(db: AsyncSession, *, principal: Principal, project_id: str) -> Agent:
     _require_transaction(db)
+    await require_project_access(db, principal, project_id, permission=ProjectPermission.MANAGE)
     agent = Agent(project_id=project_id, status="draft")
     db.add(agent)
     await db.flush()
@@ -95,10 +98,12 @@ async def create_agent(db: AsyncSession, *, project_id: str) -> Agent:
 async def save_agent_draft(
     db: AsyncSession,
     *,
+    principal: Principal,
     project_id: str,
     config: dict[str, Any],
 ) -> AgentDraft:
     _require_transaction(db)
+    await require_project_access(db, principal, project_id, permission=ProjectPermission.MANAGE)
     _validate_config(config)
     agent = await db.scalar(select(Agent).where(Agent.project_id == project_id).with_for_update())
     if agent is None:
@@ -121,8 +126,11 @@ async def save_agent_draft(
     return draft
 
 
-async def publish_agent_release(db: AsyncSession, *, project_id: str) -> AgentRelease:
+async def publish_agent_release(
+    db: AsyncSession, *, principal: Principal, project_id: str
+) -> AgentRelease:
     _require_transaction(db)
+    await require_project_access(db, principal, project_id, permission=ProjectPermission.MANAGE)
     agent = await db.scalar(select(Agent).where(Agent.project_id == project_id).with_for_update())
     if agent is None:
         raise LookupError(f"No agent exists for project {project_id!r}")
@@ -161,10 +169,12 @@ async def publish_agent_release(db: AsyncSession, *, project_id: str) -> AgentRe
 async def rollback_agent_release(
     db: AsyncSession,
     *,
+    principal: Principal,
     project_id: str,
     release_id: str,
 ) -> None:
     _require_transaction(db)
+    await require_project_access(db, principal, project_id, permission=ProjectPermission.MANAGE)
     agent = await db.scalar(select(Agent).where(Agent.project_id == project_id).with_for_update())
     if agent is None:
         raise LookupError(f"No agent exists for project {project_id!r}")

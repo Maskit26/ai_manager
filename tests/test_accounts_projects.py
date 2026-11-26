@@ -17,12 +17,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from ai_seller_core.core.config import Settings
 from ai_seller_core.dialog.session_service import close_session, open_or_resume_session
+from ai_seller_core.persistence.access_policy import AccountRole, Principal
 from ai_seller_core.persistence.identity_service import (
     IdentityConflictError,
     link_account_identity,
     link_user_identity,
     provision_account,
     provision_user,
+    reconcile_account_identity,
+    reconcile_user_identity,
     resolve_account_id,
     resolve_user_id,
 )
@@ -309,6 +312,36 @@ def test_accounts_projects_postgresql_migrations() -> None:
                             )
                             == provisioned_account.id
                         )
+                        recovered_account_identity = await reconcile_account_identity(
+                            session,
+                            account_id=provisioned_account.id,
+                            identity_provider="recovery-site",
+                            external_account_id="88888888-8888-4888-8888-888888888888",
+                        )
+                        repeated_recovered_account_identity = await reconcile_account_identity(
+                            session,
+                            account_id=provisioned_account.id,
+                            identity_provider="recovery-site",
+                            external_account_id="88888888-8888-4888-8888-888888888888",
+                        )
+                        assert (
+                            repeated_recovered_account_identity.id == recovered_account_identity.id
+                        )
+                        assert (
+                            await resolve_account_id(
+                                session,
+                                identity_provider="recovery-site",
+                                external_account_id="88888888-8888-4888-8888-888888888888",
+                            )
+                            == provisioned_account.id
+                        )
+                        with pytest.raises(IdentityConflictError):
+                            await reconcile_account_identity(
+                                session,
+                                account_id="account-2",
+                                identity_provider="recovery-site",
+                                external_account_id="88888888-8888-4888-8888-888888888888",
+                            )
                         with pytest.raises(IdentityConflictError):
                             await link_account_identity(
                                 session,
@@ -342,6 +375,34 @@ def test_accounts_projects_postgresql_migrations() -> None:
                             )
                             == provisioned_user.id
                         )
+                        recovered_user_identity = await reconcile_user_identity(
+                            session,
+                            user_id=provisioned_user.id,
+                            identity_provider="recovery-site",
+                            external_user_id="99999999-9999-4999-8999-999999999999",
+                        )
+                        repeated_recovered_user_identity = await reconcile_user_identity(
+                            session,
+                            user_id=provisioned_user.id,
+                            identity_provider="recovery-site",
+                            external_user_id="99999999-9999-4999-8999-999999999999",
+                        )
+                        assert repeated_recovered_user_identity.id == recovered_user_identity.id
+                        assert (
+                            await resolve_user_id(
+                                session,
+                                identity_provider="recovery-site",
+                                external_user_id="99999999-9999-4999-8999-999999999999",
+                            )
+                            == provisioned_user.id
+                        )
+                        with pytest.raises(IdentityConflictError):
+                            await reconcile_user_identity(
+                                session,
+                                user_id="user-2",
+                                identity_provider="recovery-site",
+                                external_user_id="99999999-9999-4999-8999-999999999999",
+                            )
                         with pytest.raises(IdentityConflictError):
                             await link_user_identity(
                                 session,
@@ -1149,10 +1210,29 @@ def test_agent_release_lifecycle_postgresql() -> None:
             async with AsyncSession(engine) as db:
                 async with db.begin():
                     await db.execute(text(f'SET LOCAL search_path TO "{schema}"'))
-                    await create_agent(db, project_id="agent-test-project")
+                    principal = Principal(
+                        user_id="agent-test-owner",
+                        account_id="agent-test-account",
+                        role=AccountRole.OWNER,
+                        scopes=frozenset(),
+                    )
+                    with pytest.raises(LookupError, match="Project not found"):
+                        await create_agent(
+                            db,
+                            principal=Principal(
+                                user_id="foreign-owner",
+                                account_id="foreign-account",
+                                role=AccountRole.OWNER,
+                                scopes=frozenset(),
+                            ),
+                            project_id="agent-test-project",
+                        )
+                    await create_agent(db, principal=principal, project_id="agent-test-project")
+
                     with pytest.raises(ValueError, match="excluded field"):
                         await save_agent_draft(
                             db,
+                            principal=principal,
                             project_id="agent-test-project",
                             config={
                                 **config_for(1),
@@ -1164,11 +1244,13 @@ def test_agent_release_lifecycle_postgresql() -> None:
                         )
                     await save_agent_draft(
                         db,
+                        principal=principal,
                         project_id="agent-test-project",
                         config=config_for(1),
                     )
                     release_1 = await publish_agent_release(
                         db,
+                        principal=principal,
                         project_id="agent-test-project",
                     )
                     release_1_id = release_1.id
@@ -1182,11 +1264,13 @@ def test_agent_release_lifecycle_postgresql() -> None:
                         await barrier.wait()
                         await save_agent_draft(
                             db,
+                            principal=principal,
                             project_id="agent-test-project",
                             config=config_for(2),
                         )
                         release = await publish_agent_release(
                             db,
+                            principal=principal,
                             project_id="agent-test-project",
                         )
                         return release.id
@@ -1238,6 +1322,7 @@ def test_agent_release_lifecycle_postgresql() -> None:
                     await db.execute(text(f'SET LOCAL search_path TO "{schema}"'))
                     await rollback_agent_release(
                         db,
+                        principal=principal,
                         project_id="agent-test-project",
                         release_id=release_1_id,
                     )

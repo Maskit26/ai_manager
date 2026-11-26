@@ -3,6 +3,8 @@ import json
 import logging
 from contextlib import redirect_stderr
 
+import pytest
+
 from ai_seller_core.core.config import Settings
 from ai_seller_core.core.logging import configure_logging
 
@@ -113,5 +115,46 @@ def test_json_logging_redacts_secrets_and_omits_unapproved_extras() -> None:
         assert "qdrant-secret" not in rendered
         assert "standalone-secret" not in rendered
         assert "private-payload" not in rendered
+    finally:
+        _restore_logging(root_logger, root_handlers, root_level, named_logger_state)
+
+
+@pytest.mark.parametrize("log_format", ["json", "text"])
+def test_logging_redacts_personal_data_and_environment_secrets(
+    monkeypatch: pytest.MonkeyPatch,
+    log_format: str,
+) -> None:
+    root_logger = logging.getLogger()
+    root_handlers = root_logger.handlers[:]
+    root_level = root_logger.level
+    named_loggers = ("uvicorn", "uvicorn.error", "uvicorn.access")
+    named_logger_state = {
+        name: (
+            logging.getLogger(name).handlers[:],
+            logging.getLogger(name).propagate,
+            logging.getLogger(name).level,
+        )
+        for name in named_loggers
+    }
+
+    try:
+        monkeypatch.setenv("LOG_FORMAT", log_format)
+        monkeypatch.setenv("LLM_API_KEY", "startup-secret")
+        output = io.StringIO()
+        with redirect_stderr(output):
+            configure_logging("api")
+            try:
+                raise RuntimeError("alice@example.com +1 (415) 555-2671 startup-secret")
+            except RuntimeError:
+                logging.getLogger("logging-test").exception(
+                    "Failed for alice@example.com +1 (415) 555-2671"
+                )
+
+        rendered = output.getvalue()
+        assert "alice@example.com" not in rendered
+        assert "+1 (415) 555-2671" not in rendered
+        assert "startup-secret" not in rendered
+        assert "[REDACTED_EMAIL]" in rendered
+        assert "[REDACTED_PHONE]" in rendered
     finally:
         _restore_logging(root_logger, root_handlers, root_level, named_logger_state)

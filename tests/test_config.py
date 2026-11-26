@@ -75,24 +75,26 @@ def test_deployment_profiles_require_jwt_public_keys(app_env: str) -> None:
         )
 
 
-def test_standalone_mode_requires_a_secret_and_development_environment() -> None:
+def test_standalone_mode_requires_a_secret_and_is_limited_to_local_profiles() -> None:
     with pytest.raises(ValidationError, match="JWT_STANDALONE_SECRET"):
         make_settings(app_env="development", jwt_standalone_enabled=True)
 
-    settings = make_settings(
-        app_env="development",
-        jwt_standalone_enabled=True,
-        jwt_standalone_secret="standalone-secret",
-    )
-    assert settings.jwt_standalone_enabled is True
-    assert isinstance(settings.jwt_standalone_secret, SecretStr)
-
-    with pytest.raises(ValidationError, match="only allowed in development"):
-        make_settings(
-            app_env="production",
+    for app_env in ("development", "local"):
+        settings = make_settings(
+            app_env=app_env,
             jwt_standalone_enabled=True,
             jwt_standalone_secret="standalone-secret",
         )
+        assert settings.jwt_standalone_enabled is True
+        assert isinstance(settings.jwt_standalone_secret, SecretStr)
+
+    for app_env in ("test", "staging", "production"):
+        with pytest.raises(ValidationError, match="only allowed in development/local"):
+            make_settings(
+                app_env=app_env,
+                jwt_standalone_enabled=True,
+                jwt_standalone_secret="standalone-secret",
+            )
 
 
 def test_standalone_secret_cannot_be_configured_when_mode_is_disabled() -> None:

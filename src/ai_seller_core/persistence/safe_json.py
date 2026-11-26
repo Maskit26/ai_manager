@@ -6,6 +6,8 @@ from sqlalchemy import Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.types import TypeDecorator
 
+from ai_seller_core.core.redaction import redact_personal_data
+
 _SECRET_KEY_NAMES = {
     "access-token",
     "api-key",
@@ -32,8 +34,6 @@ _SECRET_QUERY = re.compile(
 )
 _BEARER_TOKEN = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/-]+=*")
 _URL_PASSWORD = re.compile(r"(://[^:/\s]+:)[^@/\s]+@")
-_EMAIL = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
-_PHONE = re.compile(r"(?<!\w)\+?\d(?:[\s().-]*\d){7,14}(?!\w)")
 _PERSONAL_KEYS = {
     "address",
     "e-mail",
@@ -80,20 +80,7 @@ def redact_sensitive_data(value: Any, *, mask_personal_data: bool = False) -> An
         value = _BEARER_TOKEN.sub("Bearer [REDACTED]", value)
         value = _URL_PASSWORD.sub(r"\1[REDACTED]@", value)
         if mask_personal_data:
-            value = _EMAIL.sub("[REDACTED_EMAIL]", value)
-
-            def redact_phone(match: re.Match[str]) -> str:
-                phone = match.group(0)
-                digits = re.sub(r"\D", "", phone)
-                if (
-                    8 <= len(digits) <= 15
-                    and (phone.startswith("+") or re.search(r"[\s().-]", phone))
-                    and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", phone)
-                ):
-                    return "[REDACTED_PHONE]"
-                return phone
-
-            value = _PHONE.sub(redact_phone, value)
+            value = redact_personal_data(value)
         return value
     return value
 

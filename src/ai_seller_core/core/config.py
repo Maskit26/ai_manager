@@ -9,7 +9,7 @@ from sqlalchemy.exc import ArgumentError
 
 class Settings(BaseSettings):
     app_name: str = "AI Seller Core"
-    app_env: Literal["development", "test", "staging", "production"] = "development"
+    app_env: Literal["local", "development", "test", "staging", "production"] = "development"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     log_format: Literal["json", "text"] = "json"
     jwt_access_token_ttl_minutes: int = Field(default=15, ge=1, le=15)
@@ -90,8 +90,8 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_deployment_profile(self) -> "Settings":
         if self.jwt_standalone_enabled:
-            if self.app_env != "development":
-                raise ValueError("JWT standalone mode is only allowed in development")
+            if self.app_env not in {"local", "development"}:
+                raise ValueError("JWT standalone mode is only allowed in development/local")
             if self.jwt_standalone_secret is None:
                 raise ValueError(
                     "JWT_STANDALONE_SECRET is required when standalone mode is enabled"

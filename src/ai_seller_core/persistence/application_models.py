@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
     func,
     text,
 )
@@ -21,6 +22,33 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from ai_seller_core.persistence.base import Base
 from ai_seller_core.persistence.safe_json import PrivacyRedactedJSONB, RedactedJSONB
+
+_AUDIT_DIFF_FIELDS_BY_ACTION = {
+    "account.provisioned": {"owner_user_id"},
+    "membership.added": {"user_id", "role"},
+    "membership.role_changed": {"user_id", "from_role", "to_role"},
+    "membership.removed": {"user_id", "role"},
+    "membership.status_changed": {
+        "user_id",
+        "role",
+        "from_status",
+        "to_status",
+    },
+    "project_operator.assigned": {"project_id", "user_id"},
+    "project_operator.status_changed": {
+        "project_id",
+        "user_id",
+        "from_status",
+        "to_status",
+    },
+    "dialog_operator.assigned": {"user_id"},
+    "dialog_operator.released": {"user_id"},
+    "escalation.claimed": {"user_id"},
+    "escalation.auto_assigned": {"user_id"},
+    "escalation.resolved": {"user_id", "status"},
+    "project.deletion_requested": {"from_status", "to_status"},
+    "project.restored": {"from_status", "to_status"},
+}
 
 
 def _new_id() -> str:
@@ -214,6 +242,32 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+def validate_audit_diff(action: str, diff: object) -> dict[str, str]:
+    allowed_fields = _AUDIT_DIFF_FIELDS_BY_ACTION.get(action)
+    if allowed_fields is None:
+        raise ValueError(f"Audit action is not allowlisted: {action}")
+    if not isinstance(diff, dict):
+        raise TypeError("Audit diff must be a mapping")
+    if any(not isinstance(key, str) for key in diff):
+        raise TypeError("Audit diff keys must be strings")
+
+    unexpected_fields = set(diff) - allowed_fields
+    if unexpected_fields:
+        raise ValueError(
+            f"Audit diff contains fields that are not allowlisted for {action}: "
+            f"{', '.join(sorted(unexpected_fields))}"
+        )
+    if any(not isinstance(value, str) for value in diff.values()):
+        raise TypeError("Audit diff values must be strings")
+    return dict(diff)
+
+
+@event.listens_for(AuditLog, "before_insert")
+@event.listens_for(AuditLog, "before_update")
+def _validate_audit_log_diff(_mapper: Any, _connection: Any, target: AuditLog) -> None:
+    target.diff = validate_audit_diff(target.action, target.diff)
 
 
 class ProjectDeletionRequest(Base):

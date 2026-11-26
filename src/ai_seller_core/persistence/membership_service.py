@@ -8,8 +8,20 @@ from enum import StrEnum
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai_seller_core.persistence.access_policy import AccountRole, can_manage_roles
+from ai_seller_core.persistence.access_policy import (
+    AccountRole,
+    AuthorizationError,
+    ProjectPermission,
+    can_access_project,
+    can_manage_roles,
+)
 from ai_seller_core.persistence.application_models import AuditLog, Escalation
+from ai_seller_core.persistence.authorization_service import (
+    has_assigned_dialog_access as _has_assigned_dialog_access,
+)
+from ai_seller_core.persistence.authorization_service import (
+    require_project_belongs_to_account,
+)
 from ai_seller_core.persistence.identity_service import (
     IdentityConflictError,
     provision_account,
@@ -32,10 +44,6 @@ PROVISIONING_SYSTEM_ACTOR = "identity_provisioning"
 
 class MembershipError(ValueError):
     """Raised when a membership operation violates an account invariant."""
-
-
-class AuthorizationError(PermissionError):
-    """Raised when the actor's role does not allow the requested membership change."""
 
 
 class AccessStatus(StrEnum):
@@ -545,7 +553,7 @@ async def has_owner_admin_project_access(
     if project_exists is None:
         return False
     role = await get_active_membership_role(session, account_id=account_id, user_id=user_id)
-    return role in {AccountRole.OWNER, AccountRole.ADMIN}
+    return role is not None and can_access_project(role, ProjectPermission.MANAGE)
 
 
 async def has_assigned_dialog_access(
@@ -556,30 +564,13 @@ async def has_assigned_dialog_access(
     session_id: str,
     user_id: str,
 ) -> bool:
-    """Return whether an active roster operator is assigned to this dialog."""
-    _require_transaction(session)
-    assignment_id = await session.scalar(
-        select(DialogOperatorAssignment.session_id)
-        .join(
-            AccountMembership,
-            AccountMembership.id == DialogOperatorAssignment.membership_id,
-        )
-        .join(
-            ProjectOperator,
-            (ProjectOperator.membership_id == AccountMembership.id)
-            & (ProjectOperator.project_id == DialogOperatorAssignment.project_id),
-        )
-        .where(
-            DialogOperatorAssignment.account_id == account_id,
-            DialogOperatorAssignment.project_id == project_id,
-            DialogOperatorAssignment.session_id == session_id,
-            AccountMembership.user_id == user_id,
-            AccountMembership.role == AccountRole.OPERATOR.value,
-            AccountMembership.status == AccessStatus.ACTIVE.value,
-            ProjectOperator.status == AccessStatus.ACTIVE.value,
-        )
+    return await _has_assigned_dialog_access(
+        session,
+        account_id=account_id,
+        project_id=project_id,
+        session_id=session_id,
+        user_id=user_id,
     )
-    return assignment_id is not None
 
 
 async def _require_owner_admin_project_access(
@@ -594,11 +585,7 @@ async def _require_owner_admin_project_access(
 async def _lock_dialog_session(
     session: AsyncSession, *, account_id: str, project_id: str, session_id: str
 ) -> DialogSession:
-    project_exists = await session.scalar(
-        select(Project.id).where(Project.id == project_id, Project.account_id == account_id)
-    )
-    if project_exists is None:
-        raise LookupError("Project not found")
+    await require_project_belongs_to_account(session, account_id=account_id, project_id=project_id)
     dialog = await session.scalar(
         select(DialogSession)
         .where(DialogSession.project_id == project_id, DialogSession.id == session_id)
@@ -832,7 +819,7 @@ async def release_dialog_assignment(
     actor = await _require_membership(session, account_id, actor_user_id)
     if actor.status != AccessStatus.ACTIVE.value:
         raise AuthorizationError("Active account membership is required")
-    is_manager = actor.role in {AccountRole.OWNER.value, AccountRole.ADMIN.value}
+    is_manager = can_access_project(AccountRole(actor.role), ProjectPermission.MANAGE)
     if is_manager:
         await _require_owner_admin_project_access(
             session,

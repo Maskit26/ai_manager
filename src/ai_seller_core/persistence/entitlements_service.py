@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai_seller_core.persistence.authorization_service import require_project_belongs_to_account
 from ai_seller_core.persistence.billing_models import (
     AgentSlot,
     DancoinBalance,
@@ -426,6 +427,8 @@ async def check_access(
 ) -> EntitlementSnapshot:
     """Enforce access in the resource transaction; agent_create reserves one slot."""
     _require_transaction(db)
+    if project_id is not None:
+        await require_project_belongs_to_account(db, account_id=account_id, project_id=project_id)
     instant = _utc(now or datetime.now(UTC))
     snapshot = await get_entitlements(db, account_id=account_id, now=instant)
 

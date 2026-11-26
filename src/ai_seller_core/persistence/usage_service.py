@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_seller_core.persistence.application_models import UsageCounter
+from ai_seller_core.persistence.authorization_service import require_project_belongs_to_account
 from ai_seller_core.persistence.billing_models import (
     DancoinTransaction,
     LlmModel,
@@ -159,6 +160,7 @@ async def record_llm_usage_and_settle(
         if period_end <= period_start:
             raise ValueError("period_end must be after period_start")
 
+    await require_project_belongs_to_account(db, account_id=account_id, project_id=project_id)
     async with db.begin_nested():
         await _locked_balance(db, account_id)
         reservation = await _locked_reservation(db, operation_id, account_id)

@@ -133,6 +133,38 @@ async def link_user_identity(
     return existing
 
 
+async def reconcile_account_identity(
+    session: AsyncSession,
+    *,
+    account_id: str,
+    identity_provider: str,
+    external_account_id: str,
+) -> AccountIdentity:
+    """Attach a recreated external identity to its canonical backend account."""
+    return await link_account_identity(
+        session,
+        account_id=account_id,
+        identity_provider=identity_provider,
+        external_account_id=external_account_id,
+    )
+
+
+async def reconcile_user_identity(
+    session: AsyncSession,
+    *,
+    user_id: str,
+    identity_provider: str,
+    external_user_id: str,
+) -> UserIdentity:
+    """Attach a recreated external identity to its canonical backend user."""
+    return await link_user_identity(
+        session,
+        user_id=user_id,
+        identity_provider=identity_provider,
+        external_user_id=external_user_id,
+    )
+
+
 async def provision_account(
     session: AsyncSession,
     *,

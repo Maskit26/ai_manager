@@ -51,6 +51,8 @@ async def _test_entitlement_access_cache_invalidation_and_slots_postgresql() -> 
     schema_created = False
     account_id = str(uuid4())
     project_id = str(uuid4())
+    foreign_account_id = str(uuid4())
+    foreign_project_id = str(uuid4())
     plan_id = str(uuid4())
     subscription_id = str(uuid4())
 
@@ -118,6 +120,22 @@ async def _test_entitlement_access_cache_invalidation_and_slots_postgresql() -> 
                 )
             )
             await db.execute(
+                insert(Account).values(
+                    id=foreign_account_id,
+                    status="active",
+                )
+            )
+            await db.execute(
+                insert(Project).values(
+                    id=foreign_project_id,
+                    account_id=foreign_account_id,
+                    locale="ru",
+                    timezone="UTC",
+                    settings={},
+                    status="active",
+                )
+            )
+            await db.execute(
                 insert(Subscription).values(
                     id=subscription_id,
                     account_id=account_id,
@@ -169,6 +187,15 @@ async def _test_entitlement_access_cache_invalidation_and_slots_postgresql() -> 
         await in_transaction(
             lambda db: check_access(db, account_id=account_id, action="catalog_import")
         )
+        with pytest.raises(LookupError, match="Project not found"):
+            await in_transaction(
+                lambda db: check_access(
+                    db,
+                    account_id=account_id,
+                    action="llm_call",
+                    project_id=foreign_project_id,
+                )
+            )
 
         with pytest.raises(EntitlementAccessError) as feature_error:
             await in_transaction(

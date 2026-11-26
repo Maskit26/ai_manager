@@ -6,8 +6,12 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from ai_seller_core.core.config import Settings
+from ai_seller_core.core.redaction import redact_personal_data
 
 _CONTEXT_FIELDS = ("queue", "job_id", "kind", "correlation_id")
+_SECRET_ENV_NAME = re.compile(
+    r"(?i)(?:PASSWORD|PASSWD|TOKEN|API[_-]?KEY|SECRET|CREDENTIAL|PRIVATE[_-]?KEY|DATABASE_URL)"
+)
 _SECRET_ASSIGNMENT = re.compile(
     r"(?i)\b(password|passwd|token|api[_-]?key|secret|authorization)\b"
     r"(\s*[:=]\s*)([^\s,;&]+)"
@@ -28,7 +32,8 @@ class _Redactor:
             value = value.replace(secret, "[REDACTED]")
         value = _SECRET_ASSIGNMENT.sub(r"\1\2[REDACTED]", value)
         value = _SECRET_QUERY.sub(r"\1[REDACTED]", value)
-        return _URL_PASSWORD.sub(r"\1[REDACTED]\2", value)
+        value = _URL_PASSWORD.sub(r"\1[REDACTED]\2", value)
+        return redact_personal_data(value)
 
 
 class _ProcessFilter(logging.Filter):
@@ -97,7 +102,11 @@ def configure_logging(
         log_format = os.getenv("LOG_FORMAT", "json").lower()
         if log_format not in {"json", "text"}:
             log_format = "json"
-        secrets: tuple[str, ...] = ()
+        secrets = tuple(
+            value.strip()
+            for name, value in os.environ.items()
+            if _SECRET_ENV_NAME.search(name) and value.strip()
+        )
     else:
         level_name = settings.log_level
         log_format = settings.log_format

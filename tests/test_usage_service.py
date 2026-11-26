@@ -130,6 +130,8 @@ def test_usage_record_counter_and_settlement_postgresql() -> None:
         engine = None
         account_id = str(uuid4())
         project_id = str(uuid4())
+        foreign_account_id = str(uuid4())
+        foreign_project_id = str(uuid4())
         plan_id = str(uuid4())
         subscription_id = str(uuid4())
         period_start = datetime(2026, 11, 1, tzinfo=UTC)
@@ -161,12 +163,13 @@ def test_usage_record_counter_and_settlement_postgresql() -> None:
             operation_id: str,
             input_tokens: int,
             output_tokens: int,
+            project_id_override: str | None = None,
         ):
             return await in_transaction(
                 lambda db: record_llm_usage_and_settle(
                     db,
                     account_id=account_id,
-                    project_id=project_id,
+                    project_id=project_id if project_id_override is None else project_id_override,
                     operation_id=operation_id,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
@@ -209,6 +212,24 @@ def test_usage_record_counter_and_settlement_postgresql() -> None:
                     {
                         "id": project_id,
                         "account_id": account_id,
+                        "locale": "ru",
+                        "timezone": "UTC",
+                        "settings": {},
+                        "status": "active",
+                    },
+                )
+                await connection.execute(
+                    insert(Account),
+                    {
+                        "id": foreign_account_id,
+                        "status": "active",
+                    },
+                )
+                await connection.execute(
+                    insert(Project),
+                    {
+                        "id": foreign_project_id,
+                        "account_id": foreign_account_id,
                         "locale": "ru",
                         "timezone": "UTC",
                         "settings": {},
@@ -281,6 +302,13 @@ def test_usage_record_counter_and_settlement_postgresql() -> None:
                     amount=Decimal("10.00"),
                 )
             )
+            with pytest.raises(LookupError, match="Project not found"):
+                await record(
+                    "cross-tenant-llm-call",
+                    1,
+                    1,
+                    project_id_override=foreign_project_id,
+                )
             await reserve("llm-call-1", Decimal("5.00"))
 
             first_record, first_settlement = await record("llm-call-1", 101, 10)

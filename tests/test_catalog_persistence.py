@@ -19,6 +19,7 @@ from ai_seller_core.jobs.inbox import ingest_channel_event
 from ai_seller_core.jobs.outbox import enqueue_outbound_message
 from ai_seller_core.jobs.repository import enqueue_job
 from ai_seller_core.persistence import retention
+from ai_seller_core.persistence.access_policy import AccountRole, Principal
 from ai_seller_core.persistence.catalog import (
     CatalogImportFinalizationError,
     finalize_catalog_import,
@@ -148,6 +149,8 @@ def test_catalog_constraints_and_atomic_finalization_postgresql(monkeypatch) -> 
                 )
                 project_a_id = project_a.id
                 project_b_id = project_b.id
+                account_a_id = account_a.id
+                account_b_id = account_b.id
                 session.add_all((project_a, project_b))
                 await session.flush()
                 channel_id = "web"
@@ -549,7 +552,7 @@ def test_catalog_constraints_and_atomic_finalization_postgresql(monkeypatch) -> 
                         session.add(
                             LlmCall(
                                 id=new_id(),
-                                account_id=account_b.id,
+                                account_id=account_b_id,
                                 project_id=project_a_id,
                                 provider="gateway",
                                 model="test-model",
@@ -761,10 +764,30 @@ def test_catalog_constraints_and_atomic_finalization_postgresql(monkeypatch) -> 
                         await session.flush()
                 await session.commit()
 
+                with pytest.raises(LookupError, match="Project not found"):
+                    await finalize_catalog_import(
+                        session,
+                        principal=Principal(
+                            user_id="foreign-owner",
+                            account_id=account_b.id,
+                            role=AccountRole.OWNER,
+                            scopes=frozenset(),
+                        ),
+                        project_id=project_a_id,
+                        import_id="foreign-import-id",
+                        products=[],
+                    )
+
                 for position, unsafe_import_id in enumerate(unsafe_import_ids):
                     with pytest.raises(CatalogImportFinalizationError):
                         await finalize_catalog_import(
                             session,
+                            principal=Principal(
+                                user_id="catalog-owner",
+                                account_id=account_a_id,
+                                role=AccountRole.OWNER,
+                                scopes=frozenset(),
+                            ),
                             project_id=project_a_id,
                             import_id=unsafe_import_id,
                             products=[
@@ -799,6 +822,12 @@ def test_catalog_constraints_and_atomic_finalization_postgresql(monkeypatch) -> 
                 with pytest.raises(IntegrityError):
                     await finalize_catalog_import(
                         session,
+                        principal=Principal(
+                            user_id="catalog-owner",
+                            account_id=account_a_id,
+                            role=AccountRole.OWNER,
+                            scopes=frozenset(),
+                        ),
                         project_id=project_a_id,
                         import_id=import_id,
                         products=[
@@ -827,6 +856,12 @@ def test_catalog_constraints_and_atomic_finalization_postgresql(monkeypatch) -> 
 
                 await finalize_catalog_import(
                     session,
+                    principal=Principal(
+                        user_id="catalog-owner",
+                        account_id=account_a_id,
+                        role=AccountRole.OWNER,
+                        scopes=frozenset(),
+                    ),
                     project_id=project_a_id,
                     import_id=import_id,
                     products=[

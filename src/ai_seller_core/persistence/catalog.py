@@ -6,6 +6,8 @@ from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai_seller_core.persistence.access_policy import Principal, ProjectPermission
+from ai_seller_core.persistence.authorization_service import require_project_access
 from ai_seller_core.persistence.models import (
     CatalogImport,
     CatalogImportError,
@@ -21,6 +23,7 @@ class CatalogImportFinalizationError(ValueError):
 async def finalize_catalog_import(
     session: AsyncSession,
     *,
+    principal: Principal,
     project_id: str,
     import_id: str,
     products: Sequence[Mapping[str, Any]],
@@ -46,6 +49,12 @@ async def finalize_catalog_import(
 
     finalization_error: str | None = None
     async with session.begin():
+        await require_project_access(
+            session,
+            principal,
+            project_id,
+            permission=ProjectPermission.MANAGE,
+        )
         import_record = await session.scalar(
             select(CatalogImport)
             .where(

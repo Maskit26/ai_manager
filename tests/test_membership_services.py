@@ -21,8 +21,13 @@ from ai_seller_core.api.auth import (
     build_principal,
 )
 from ai_seller_core.core.config import Settings
-from ai_seller_core.persistence.access_policy import AccountRole, can_manage_roles
+from ai_seller_core.persistence.access_policy import (
+    AccountRole,
+    Principal,
+    can_manage_roles,
+)
 from ai_seller_core.persistence.application_models import AuditLog, Escalation
+from ai_seller_core.persistence.authorization_service import require_dialog_access
 from ai_seller_core.persistence.identity_service import IdentityConflictError, provision_user
 from ai_seller_core.persistence.membership_service import (
     PROVISIONING_SYSTEM_ACTOR,
@@ -546,6 +551,47 @@ def test_dialog_operator_access_and_assignment_are_account_scoped() -> None:
                 session_id=first_dialog.id,
                 target_user_id=seed.operator_id,
             )
+            operator_principal = Principal(
+                user_id=seed.operator_id,
+                account_id=seed.account_id,
+                role=AccountRole.OPERATOR,
+                scopes=frozenset({"dialogs:read"}),
+            )
+            dialog = await require_dialog_access(
+                session,
+                operator_principal,
+                project_id=project.id,
+                session_id=first_dialog.id,
+                required_scopes={"dialogs:read"},
+            )
+            assert dialog.id == first_dialog.id
+            with pytest.raises(AuthorizationError, match="scope"):
+                await require_dialog_access(
+                    session,
+                    operator_principal,
+                    project_id=project.id,
+                    session_id=first_dialog.id,
+                    required_scopes={"dialogs:write"},
+                )
+            with pytest.raises(AuthorizationError, match="dialog"):
+                await require_dialog_access(
+                    session,
+                    operator_principal,
+                    project_id=project.id,
+                    session_id=second_dialog.id,
+                )
+            with pytest.raises(LookupError, match="Project not found"):
+                await require_dialog_access(
+                    session,
+                    Principal(
+                        user_id=seed.owner_id,
+                        account_id=other_account.account_id,
+                        role=AccountRole.OWNER,
+                        scopes=frozenset(),
+                    ),
+                    project_id=project.id,
+                    session_id=first_dialog.id,
+                )
             assert await has_assigned_dialog_access(
                 session,
                 account_id=seed.account_id,

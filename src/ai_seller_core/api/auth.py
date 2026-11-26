@@ -20,7 +20,7 @@ from fastapi.security import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_seller_core.core.config import Settings, get_settings
-from ai_seller_core.persistence.access_policy import AccountRole
+from ai_seller_core.persistence.access_policy import Principal, missing_scopes
 from ai_seller_core.persistence.base import get_session
 from ai_seller_core.persistence.identity_service import resolve_user_id
 from ai_seller_core.persistence.membership_service import (
@@ -47,14 +47,6 @@ class ActiveMembershipRequired(PermissionError):
 class VerifiedAccessToken:
     subject: str
     account_id: str
-    scopes: frozenset[str]
-
-
-@dataclass(frozen=True)
-class Principal:
-    user_id: str
-    account_id: str
-    role: AccountRole
     scopes: frozenset[str]
 
 
@@ -232,9 +224,9 @@ async def get_current_principal(
             detail="Active account membership required",
         ) from None
 
-    missing_scopes = set(security_scopes.scopes).difference(principal.scopes)
-    if missing_scopes:
-        required_scope = " ".join(sorted(missing_scopes))
+    missing = missing_scopes(principal, security_scopes.scopes)
+    if missing:
+        required_scope = " ".join(sorted(missing))
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Insufficient scope",
