@@ -16,6 +16,7 @@ from sqlalchemy import (
     UniqueConstraint,
     event,
     func,
+    inspect,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -48,6 +49,8 @@ _AUDIT_DIFF_FIELDS_BY_ACTION = {
     "escalation.resolved": {"user_id", "status"},
     "project.deletion_requested": {"from_status", "to_status"},
     "project.restored": {"from_status", "to_status"},
+    "retention.expired": set(),
+    "retention.retained": set(),
 }
 
 
@@ -267,6 +270,8 @@ def validate_audit_diff(action: str, diff: object) -> dict[str, str]:
 @event.listens_for(AuditLog, "before_insert")
 @event.listens_for(AuditLog, "before_update")
 def _validate_audit_log_diff(_mapper: Any, _connection: Any, target: AuditLog) -> None:
+    if target.diff is None and not inspect(target).attrs.diff.history.has_changes():
+        target.diff = {}
     target.diff = validate_audit_diff(target.action, target.diff)
 
 

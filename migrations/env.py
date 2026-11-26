@@ -1,3 +1,4 @@
+import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -13,7 +14,7 @@ config.set_main_option(
     "sqlalchemy.url",
     get_settings().database_url.get_secret_value().replace("%", "%%"),
 )
-if config.config_file_name is not None:
+if config.config_file_name is not None and os.environ.get("APP_ENV") != "test":
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata

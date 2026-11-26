@@ -8,7 +8,7 @@ Create Date: 2026-12-04
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
+from alembic import context, op
 
 revision: str = "20261204_dialog_assignments"
 down_revision: str | None = "20261203_entitlement_invalidate"
@@ -17,7 +17,16 @@ depends_on: str | Sequence[str] | None = None
 
 
 def _fail_if_rows(bind: sa.Connection, query: str, message: str) -> None:
-    if bind.execute(sa.text(query)).first() is not None:
+    if context.is_offline_mode():
+        escaped_message = message.replace("'", "''")
+        op.execute(
+            sa.text(
+                "DO $$ BEGIN "
+                f"IF EXISTS ({query}) THEN RAISE EXCEPTION '{escaped_message}'; "
+                "END IF; END $$"
+            )
+        )
+    elif bind.scalar(sa.text(f"SELECT EXISTS ({query})")):
         raise RuntimeError(message)
 
 

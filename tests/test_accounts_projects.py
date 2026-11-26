@@ -120,6 +120,16 @@ def test_accounts_projects_offline_migration() -> None:
     assert "fk_inbox_project_channel" in sql
     assert "fk_outbox_project_channel" in sql
     assert "DO $$ BEGIN IF EXISTS (SELECT 1 FROM dialog_sessions" in sql
+    assert "RAISE EXCEPTION 'Cannot backfill account_id for existing escalations.'" in sql
+    assert (
+        "RAISE EXCEPTION 'A legacy escalation assignee cannot be mapped to an account membership.'"
+    ) in sql
+    assert "RAISE EXCEPTION 'Cannot migrate duplicate open escalations for a dialog.'" in sql
+    assert "RAISE EXCEPTION 'Cannot migrate an operator assigned to multiple open dialogs.'" in sql
+    assert (
+        "RAISE EXCEPTION 'Cannot migrate an open escalation without an active project operator.'"
+        in sql
+    )
     for table in ("background_jobs", "inbox", "outbox", "chat_messages"):
         assert f"DO $$ BEGIN IF EXISTS (SELECT 1 FROM {table} WHERE project_id IS NULL)" in sql
 
@@ -191,7 +201,7 @@ def test_accounts_projects_postgresql_migrations() -> None:
                 await connection.run_sync(upgrade)
                 assert await connection.scalar(text("SELECT count(*) FROM alembic_version")) == 1
                 assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                    "20261203_entitlement_invalidate"
+                    "20261204_dialog_assignments"
                 )
                 assert (
                     await connection.scalar(select(User.id).where(User.id == "user-1")) == "user-1"

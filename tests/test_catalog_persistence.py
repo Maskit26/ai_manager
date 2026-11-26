@@ -382,13 +382,12 @@ def test_catalog_constraints_and_atomic_finalization_postgresql(monkeypatch) -> 
                     account_id=account_a.id,
                     project_id=project_a_id,
                     actor_id="operator-1",
-                    action="lead.created",
-                    entity_type="lead",
-                    entity_id=lead.id,
+                    action="membership.added",
+                    entity_type="user",
+                    entity_id="operator-1",
                     diff={
-                        "password": "must-not-be-persisted",
-                        "email": "buyer@example.test",
-                        "note": "Call +1 (415) 555-0132",
+                        "user_id": "buyer@example.test",
+                        "role": "operator",
                     },
                 )
                 domain_event = DomainEvent(
@@ -517,9 +516,8 @@ def test_catalog_constraints_and_atomic_finalization_postgresql(monkeypatch) -> 
                 await session.refresh(domain_event)
                 assert tool_execution.arguments["api_key"] == "[REDACTED]"
                 assert tool_execution.result["token"] == "[REDACTED]"
-                assert audit_entry.diff["password"] == "[REDACTED]"
-                assert audit_entry.diff["email"] == "[REDACTED]"
-                assert audit_entry.diff["note"] == "Call [REDACTED_PHONE]"
+                assert audit_entry.diff["user_id"] == "[REDACTED_EMAIL]"
+                assert audit_entry.diff["role"] == "operator"
                 assert domain_event.payload["message"] == ("Contact [REDACTED_EMAIL]")
 
                 with pytest.raises(IntegrityError):

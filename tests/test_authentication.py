@@ -56,6 +56,7 @@ def make_token(
     private_key: rsa.RSAPrivateKey,
     *,
     claims: dict[str, Any] | None = None,
+    time_offsets: dict[str, int] | None = None,
     remove_claims: tuple[str, ...] = (),
     key_id: str = "test-key",
     algorithm: str = "RS256",
@@ -71,6 +72,8 @@ def make_token(
         "nbf": now,
         "exp": now + 60,
     }
+    if time_offsets:
+        payload.update({claim: now + offset for claim, offset in time_offsets.items()})
     if claims:
         payload.update(claims)
     for claim in remove_claims:
@@ -98,6 +101,36 @@ def test_verify_access_token_uses_kid_and_returns_claims(
     assert verified.scopes == frozenset({"dialogs:read"})
 
 
+def test_verify_access_token_accepts_old_and_new_keys_during_rotation(
+    key_pair: tuple[rsa.RSAPrivateKey, str],
+) -> None:
+    old_private_key, old_public_key = key_pair
+    new_private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    new_public_key = new_private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    settings = Settings(
+        _env_file=None,
+        database_url=DATABASE_URL,
+        jwt_public_keys={
+            "old-key": old_public_key,
+            "new-key": new_public_key.decode("utf-8"),
+        },
+    )
+
+    validate_public_keyring(settings)
+    for key_id, private_key in (
+        ("old-key", old_private_key),
+        ("new-key", new_private_key),
+    ):
+        verified = verify_access_token(
+            make_token(private_key, key_id=key_id),
+            settings,
+        )
+        assert verified.subject == SUBJECT
+
+
 @pytest.mark.parametrize(
     ("token_options", "settings_overrides"),
     [
@@ -105,29 +138,17 @@ def test_verify_access_token_uses_kid_and_returns_claims(
         ({"remove_claims": ("nbf",)}, {}),
         ({"claims": {"aud": "other-api"}}, {}),
         ({"claims": {"iss": "other-issuer"}}, {}),
-        ({"claims": {"exp": int(time.time()) + 16 * 60}}, {}),
+        ({"time_offsets": {"exp": 16 * 60}}, {}),
         (
-            {
-                "claims": {
-                    "iat": int(time.time()) + 60,
-                    "nbf": int(time.time()),
-                    "exp": int(time.time()) + 120,
-                }
-            },
+            {"time_offsets": {"iat": 60, "nbf": 0, "exp": 120}},
             {},
         ),
         ({"claims": {"scopes": "dialogs:read"}}, {}),
         ({"claims": {"account_id": "not-a-uuid"}}, {}),
-        ({"claims": {"nbf": int(time.time()) + 60}}, {}),
+        ({"time_offsets": {"nbf": 300, "exp": 600}}, {}),
         ({"claims": {"nbf": True}}, {}),
         (
-            {
-                "claims": {
-                    "iat": int(time.time()) - 120,
-                    "nbf": int(time.time()) - 120,
-                    "exp": int(time.time()) - 1,
-                }
-            },
+            {"time_offsets": {"iat": -120, "nbf": -120, "exp": -1}},
             {},
         ),
     ],

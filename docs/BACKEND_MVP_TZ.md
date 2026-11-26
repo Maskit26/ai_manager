@@ -1133,10 +1133,10 @@ F31 — механизм расширения, а не единый универ
 - **Проверить Outbox в runtime**: в Части 2 проверялась атомарность записи Outbox в PostgreSQL, но не доставка во внешний канал, повторы и ошибки провайдера. Реализацию/тесты на mock можно делать локально в соответствующей работе по runtime-интеграциям; проверка с реальным каналом потребует доступного провайдера и credentials.
 - **Проверить Qdrant integration**: фильтр удаления уже тестируется через mock HTTP transport. Live-проверка требует доступного экземпляра Qdrant; полноценная индексация и поиск относятся к реализации vector/runtime flow, а не к отсутствию серверного cron.
 - **Проверить полный набор тестов повторно**, если нужна уверенность в отсутствии flaky-сбоя: в чате один полный запуск дал 33 passed и один упавший retry-тест; отдельный повтор retry-теста прошёл, после чего пользователь подтвердил переход к следующему пункту.
-- **Исправить два теста миграций (ещё не исправлено)**:
-  1. `tests/test_accounts_projects.py::test_accounts_projects_offline_migration` — исправить offline-путь миграции `20261204_dialog_operator_assignments`: `_fail_if_rows` не должен вызывать `bind.execute(...).first()` при генерации SQL в offline-режиме.
-  2. `tests/test_accounts_projects.py::test_accounts_projects_postgresql_migrations` — заменить устаревшее ожидание revision `20261203_entitlement_invalidate` на актуальную head `20261204_dialog_assignments`.
-  Критерий готовности: оба теста проходят; online-проверки миграции и генерация offline SQL сохраняются.
+- **Исправить два теста миграций (исправлено и проверено 2026-11-26)**:
+  1. `tests/test_accounts_projects.py::test_accounts_projects_offline_migration` — offline-путь миграции `20261204_dialog_operator_assignments` генерирует PostgreSQL `DO`-проверки вместо выполнения запросов через `MockConnection`; online-проверки данных сохранены.
+  2. `tests/test_accounts_projects.py::test_accounts_projects_postgresql_migrations` — ожидание revision обновлено с `20261203_entitlement_invalidate` на актуальную head `20261204_dialog_assignments`.
+  Критерий готовности выполнен: оба целевых теста проходят; online-проверки миграции и генерация offline SQL сохранены.
 
 ### Требует будущего этапа или внешнего окружения
 - **Draft preview и подключение внешних каналов**: тестовый диалог на draft, UI/сайт и реальная обработка MAX относятся к последующим runtime/API работам, а не к схеме БД Части 2. Код и mock-тесты можно разрабатывать локально; end-to-end проверка требует доступного внешнего канала и credentials.
