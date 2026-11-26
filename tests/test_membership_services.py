@@ -14,6 +14,12 @@ from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
+from ai_seller_core.api.auth import (
+    ActiveMembershipRequired,
+    UnknownIdentityError,
+    VerifiedAccessToken,
+    build_principal,
+)
 from ai_seller_core.core.config import Settings
 from ai_seller_core.persistence.access_policy import AccountRole, can_manage_roles
 from ai_seller_core.persistence.application_models import AuditLog, Escalation
@@ -172,6 +178,61 @@ async def _seed_account(engine: AsyncEngine) -> _Seed:
             operator_id=operator.id,
             outsider_id=outsider.id,
         )
+
+
+def test_principal_resolves_bitrix_sub_and_requires_active_membership() -> None:
+    owner_external_id = str(uuid4())
+    outsider_external_id = str(uuid4())
+    unknown_external_id = str(uuid4())
+
+    async def scenario(engine: AsyncEngine) -> None:
+        async with AsyncSession(engine) as session, session.begin():
+            provisioned = await provision_account_with_owner(
+                session,
+                identity_provider=PROVIDER,
+                external_account_id=str(uuid4()),
+                external_owner_id=owner_external_id,
+            )
+            await provision_user(
+                session,
+                identity_provider=PROVIDER,
+                external_user_id=outsider_external_id,
+            )
+
+        async with AsyncSession(engine) as session:
+            owner_principal = await build_principal(
+                session,
+                VerifiedAccessToken(
+                    subject=owner_external_id,
+                    account_id=provisioned.account_id,
+                    scopes=frozenset({"projects:read"}),
+                ),
+            )
+
+            assert owner_principal.user_id == provisioned.owner_user_id
+            assert owner_principal.account_id == provisioned.account_id
+            assert owner_principal.role is OWNER
+
+            with pytest.raises(ActiveMembershipRequired):
+                await build_principal(
+                    session,
+                    VerifiedAccessToken(
+                        subject=outsider_external_id,
+                        account_id=provisioned.account_id,
+                        scopes=frozenset(),
+                    ),
+                )
+            with pytest.raises(UnknownIdentityError):
+                await build_principal(
+                    session,
+                    VerifiedAccessToken(
+                        subject=unknown_external_id,
+                        account_id=provisioned.account_id,
+                        scopes=frozenset(),
+                    ),
+                )
+
+    _run_in_schema(scenario)
 
 
 async def _memberships(engine: AsyncEngine, account_id: str) -> dict[str, str]:

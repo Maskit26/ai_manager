@@ -6,6 +6,7 @@ import httpx
 from fastapi import FastAPI
 from pydantic import ValidationError
 
+from ai_seller_core.api.auth import validate_public_keyring
 from ai_seller_core.api.health import router as health_router
 from ai_seller_core.core.config import get_settings
 from ai_seller_core.core.logging import configure_logging
@@ -19,6 +20,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging("api", settings)
     try:
+        validate_public_keyring(settings)
         async with AsyncExitStack() as stack:
             await stack.enter_async_context(database_lifespan(settings))
             app.state.settings = settings

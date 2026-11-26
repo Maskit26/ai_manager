@@ -14,7 +14,7 @@
 
 `account_memberships.user_id` ссылается на canonical пользователя в `users.id` (`ON DELETE RESTRICT`). Таблица `users` хранит минимальный профиль без ПДн: backend-generated `id` (`Text`), `created_at` и `updated_at`. Статус не хранится в `users`: отключение выполняется на уровне membership. `user_identities.user_id` также ссылается на `users.id` (`ON DELETE RESTRICT`). Миграция переносит существующие membership IDs в `users`, не меняя их; найденные старые `audit_log.actor_id` импортируются как users, чтобы сохранить ссылки аудита.
 
-В Bitrix JWT claim `sub` содержит immutable внешний UUID пользователя. Он разрешается через `user_identities`, а в membership и аудит передаётся canonical backend `user_id`. Аутентифицированный автор аудита — nullable FK `audit_log.actor_id → users.id`; системный автор хранится отдельно в `system_actor`. Одновременно задавать оба поля запрещено.
+В Bitrix JWT claim `sub` содержит immutable внешний UUID пользователя и разрешается через `user_identities`; в membership и аудит передаётся canonical backend `user_id`. Auth flow проверяет RS256/key `kid`, claims и scopes, затем читает актуальную роль из active membership. Полный runtime flow и состав principal описаны в разделе 8; дополнительная сущность или таблица БД для principal не вводится. Аутентифицированный автор аудита — nullable FK `audit_log.actor_id → users.id`; системный автор хранится отдельно в `system_actor`. Одновременно задавать оба поля запрещено.
 
 Управление membership выполняется доменными сервисами `membership_service.py`. Статус membership (`active`/`disabled`) задаёт доступ пользователя к аккаунту; owner отключить нельзя (check `ck_account_memberships_owner_active`). Назначение operator на проект хранится в `project_operators` и тоже может быть отключено. Роли определяются матрицей `access_policy.py`: owner управляет только ролями admin и operator, admin управляет только operator, operator не управляет membership. В аккаунте ровно один owner — его создатель; роль owner не назначается, не понижается и не удаляется через доменные сервисы membership, она задаётся только provisioning. Роль актора всегда читается из `account_memberships` в текущей транзакции. Provisioning создаёт аккаунт, пользователя, оба mapping и membership owner; повтор не создаёт дубликаты и не перепривязывает внешний ID. Каждое изменение membership пишет `audit_log` с системным или аутентифицированным автором и только идентификаторами и ролями в `diff`.
 
@@ -175,7 +175,6 @@
 ## 7. Решения, которые ТЗ оставляет открытыми
 
 - ТЗ не задаёт действия SQL `ON DELETE` для всех FK; для реализованных связей они зафиксированы в миграциях. Отдельная политика удаления аккаунта не входит в текущий поток удаления проекта и должна быть определена, если удаление аккаунтов будет добавлено.
-- `account_memberships.user_id` — canonical backend ID; Bitrix `sub` содержит immutable внешний UUID пользователя и сопоставляется с ним через `user_identities`. Проверка и разрешение JWT при аутентификации реализуются в последующей части.
 - Для customers применяется уникальность `(project_id, channel_type, external_user_id)`. Автоматическое объединение identities между каналами не входит в MVP-1; неподтверждённые контактные значения не являются ключом объединения.
 - Версия release уникальна в пределах агента: `(agent_id, version)`; ограничение реализовано миграцией.
 - Для задач приложения `background_jobs.project_id` обязателен; общесистемные задачи без проекта не входят в эту схему.
@@ -184,6 +183,19 @@
 - Для авторитетного источника каталога используется частичный уникальный индекс по `project_id` при `is_authoritative = true`. Для активных сессий действует ограничение не более одной записи на проект/канал/внешний чат.
 - По `usage_records` ТЗ требует индексы, но не уникальность записей по периоду; уникальное ограничение не вводится без отдельного требования.
 - Scope биллинговых таблиц определён выше; подробные бизнес-правила и реализация billing API относятся к Части 2.5.
+
+## 8. Runtime authentication flow (JWT principal)
+
+Аутентификация использует существующие `users`, `user_identities` и `account_memberships`; новая таблица или изменение схемы не требуются.
+
+1. Клиент передаёт JWT в `Authorization: Bearer`. Backend проверяет `alg=RS256`, выбирает публичный RSA-ключ по `kid` из `JWT_PUBLIC_KEYS` и валидирует key ring при запуске.
+2. Обязательные claims: `iss`, `aud`, `exp`, `nbf`, `iat`, `sub`, `account_id`, `scopes`. `iss` и `aud` сверяются с настройками. `sub` — внешний UUID пользователя Bitrix; `account_id` — canonical backend UUID. `scopes` — массив строк. `iat` не может быть в будущем; `exp - iat` должен быть больше нуля и не превышать настроенный access TTL (1–15 минут, по умолчанию 15).
+3. `sub` разрешается только по `(identity_provider='bitrix', external_user_id=sub)` в `user_identities`. Неизвестный или неоднозначный mapping отклоняется; fallback на email/name отсутствует. `account_id` принимается как canonical ID из токена и не разрешается по внешней identity.
+4. Для каждой сборки principal backend по `account_id` и найденному `user_id` читает `account_memberships` с `status='active'`. Отсутствие active membership отклоняется; текущая роль берётся из БД, а не из JWT.
+5. Результат — principal с `user_id`, `account_id`, актуальной ролью (`owner`/`admin`/`operator`) и scopes. Route-specific scopes проверяются через FastAPI `SecurityScopes`; точные имена scopes задаются вместе с endpoints в Части 4. JWT/identity/membership ошибки не приводят к поиску пользователя по изменяемым данным.
+
+Разрешение identity и чтение membership выполняются в одной транзакции. Существующие таблицы `accounts`, `users`, `user_identities`, `account_identities`, `account_memberships`, `projects`, `project_operators` и `audit_log` при добавлении этого runtime flow не меняются.
+
 ## Диалоговые транзакции и аудит
 
 `dialog_sessions` хранит версию состояния в `version`. Ограничения БД проверяют допустимые значения состояния, причины закрытия, lease fence и счётчика повторных открытий. Сессия связана с проектом и каналом; закреплённый `release_id` не меняется при возобновлении.

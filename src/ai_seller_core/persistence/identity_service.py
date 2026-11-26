@@ -242,7 +242,18 @@ async def resolve_user_id(
 ) -> str:
     _require_transaction(session)
     _validate_identity(identity_provider, external_user_id)
-    identity = await _find_user_identity(session, identity_provider, external_user_id)
-    if identity is None:
+    user_ids = (
+        await session.scalars(
+            select(UserIdentity.user_id)
+            .where(
+                UserIdentity.identity_provider == identity_provider,
+                UserIdentity.external_user_id == external_user_id,
+            )
+            .limit(2)
+        )
+    ).all()
+    if not user_ids:
         raise LookupError("External user identity not found")
-    return identity.user_id
+    if len(user_ids) > 1:
+        raise LookupError("External user identity is ambiguous")
+    return user_ids[0]
