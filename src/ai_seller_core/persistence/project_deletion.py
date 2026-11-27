@@ -232,22 +232,41 @@ async def _retention_elapsed(
     project_id: str,
     cutoff: datetime,
 ) -> bool:
-    timestamps = (
-        ("domain_events", "occurred_at"),
-        ("audit_log", "created_at"),
-        ("llm_calls", "created_at"),
-        ("usage_counters", "updated_at"),
-        ("chat_messages", "created_at"),
-        ("dialog_sessions", "last_activity_at"),
-        ("inbox", "received_at"),
-        ("outbox", "created_at"),
-        ("tool_executions", "started_at"),
+    activity_sources = (
+        ("projects", "id", ("created_at", "updated_at")),
+        ("agent_drafts", "project_id", ("updated_at",)),
+        ("agent_releases", "project_id", ("created_at",)),
+        ("agent_slots", "project_id", ("updated_at",)),
+        ("agents", "project_id", ("created_at", "updated_at")),
+        ("audit_log", "project_id", ("created_at",)),
+        ("background_jobs", "project_id", ("updated_at",)),
+        ("catalog_import_errors", "project_id", ("created_at",)),
+        ("catalog_imports", "project_id", ("updated_at",)),
+        ("catalog_sources", "project_id", ("updated_at",)),
+        ("channels", "project_id", ("created_at", "updated_at")),
+        ("chat_messages", "project_id", ("created_at",)),
+        ("customer_identities", "project_id", ("updated_at",)),
+        ("customers", "project_id", ("updated_at",)),
+        ("dialog_sessions", "project_id", ("updated_at", "last_activity_at")),
+        ("domain_events", "project_id", ("occurred_at",)),
+        ("escalations", "project_id", ("updated_at",)),
+        ("inbox", "project_id", ("updated_at",)),
+        ("kb_chunks", "project_id", ("created_at",)),
+        ("kb_documents", "project_id", ("updated_at",)),
+        ("lead_items", "project_id", ("created_at", "updated_at")),
+        ("leads", "project_id", ("updated_at",)),
+        ("llm_calls", "project_id", ("created_at",)),
+        ("outbox", "project_id", ("updated_at",)),
+        ("products", "project_id", ("updated_at",)),
+        ("tool_executions", "project_id", ("started_at", "completed_at")),
+        ("usage_counters", "project_id", ("updated_at",)),
     )
-    for table, column in timestamps:
+    for table, scope_column, columns in activity_sources:
+        recent_activity = " OR ".join(f'"{column}" >= :cutoff' for column in columns)
         has_recent_rows = await session.scalar(
             text(
                 f'SELECT EXISTS (SELECT 1 FROM "{table}" '
-                f'WHERE project_id = :project_id AND "{column}" >= :cutoff)'
+                f'WHERE "{scope_column}" = :project_id AND ({recent_activity}))'
             ),
             {"project_id": project_id, "cutoff": cutoff},
         )

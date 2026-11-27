@@ -63,6 +63,30 @@ PROJECT_SCOPED_TABLES = (
 )
 
 
+def test_retention_elapsed_checks_all_project_data_tables() -> None:
+    class RecordingSession:
+        def __init__(self) -> None:
+            self.statements: list[str] = []
+
+        async def scalar(self, statement: object, _params: object) -> bool:
+            self.statements.append(str(statement))
+            return False
+
+    session = RecordingSession()
+    assert asyncio.run(
+        project_deletion._retention_elapsed(
+            session,
+            "project-delete",
+            datetime.now(UTC) - timedelta(days=30),
+        )
+    )
+
+    checked_tables = {
+        statement.split('FROM "', 1)[1].split('"', 1)[0] for statement in session.statements
+    }
+    assert checked_tables == {*PROJECT_SCOPED_TABLES, "projects"}
+
+
 class MockQdrant:
     def __init__(self, *, failure_status: int | None = None) -> None:
         self.failure_status = failure_status
@@ -315,12 +339,38 @@ def test_project_deletion_postgresql_is_retryable_and_removes_orphans(monkeypatc
                     )
                     await session.rollback()
 
+                    activity_filters_before = len(qdrant.filters)
                     async with session.begin():
+                        channel = await session.get(Channel, (project_id, "web"))
+                        assert channel is not None
+                        previous_updated_at = channel.updated_at
+                        channel.channel_id = "web-updated"
+                        await session.flush()
+                        updated_at = await session.scalar(
+                            select(Channel.updated_at).where(
+                                Channel.project_id == project_id,
+                                Channel.channel_id == "web-updated",
+                            )
+                        )
+                        assert updated_at > previous_updated_at
+                        channel.updated_at = now + timedelta(days=30)
+                        await session.flush()
                         assert (
                             await purge_due_project_deletions(
                                 session,
                                 store,
                                 now=now + timedelta(days=31),
+                            )
+                            == 0
+                        )
+                    assert len(qdrant.filters) == activity_filters_before
+
+                    async with session.begin():
+                        assert (
+                            await purge_due_project_deletions(
+                                session,
+                                store,
+                                now=now + timedelta(days=61),
                             )
                             == 1
                         )

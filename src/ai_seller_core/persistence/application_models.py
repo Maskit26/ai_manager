@@ -161,6 +161,15 @@ class LeadItem(Base):
     product_id: Mapped[str | None] = mapped_column(String(36))
     quantity: Mapped[float] = mapped_column(Numeric(12, 3), nullable=False)
     product_snapshot: Mapped[dict[str, Any]] = mapped_column(RedactedJSONB(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
 
 
 class Escalation(Base):
@@ -206,6 +215,12 @@ class Escalation(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )
 
 
