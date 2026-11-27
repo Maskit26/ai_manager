@@ -132,13 +132,14 @@
 | `events`, `audit_log` | Индексы по проекту, времени и типу; применяются retention и маскирование ПДн. `audit_log.actor_id` — nullable FK `users.id` (`RESTRICT`), `system_actor` хранится отдельно; CHECK запрещает одновременно заполнять оба поля. Аудит также ограничен составным FK `(project_id, account_id) -> (projects.id, projects.account_id)` (`RESTRICT`). |
 | `llm_calls`, `usage_counters` | Индексы по аккаунту, проекту и времени; ключи провайдеров не хранятся. |
 | `tariff_plans`, `llm_models`, `dancoin_packages` | Уникальность `(code, version)` или `(model_id, version)`, как указано в ТЗ. Версии, на которые ссылаются оплаченные периоды/usage, сохраняются. |
-| `subscriptions` | FK на аккаунт и тарифный план; не более одной текущей подписки на аккаунт; trial выдаётся один раз на аккаунт. |
+| `subscriptions` | FK на аккаунт и текущий тариф; не более одной текущей подписки на аккаунт; trial выдаётся один раз на аккаунт. Ожидающая смена хранит тариф, период, дату начала и оплаченный snapshot отдельно от текущих entitlements; snapshot активируется при наступлении оплаченного периода. |
 | `dancoin_balances` | FK один-к-одному на аккаунт. |
 | `dancoin_transactions` | Уникальный idempotent reference; индексы по аккаунту и времени. |
 | `dancoin_reservations` | Уникальность operation/call ID; атомарное резервирование баланса. |
 | `invoices` | Уникальный номер invoice. |
 | `payments` | FK на invoice и аккаунт; уникальность `(provider, external_payment_id)`. |
 | `payment_events` | Уникальный `provider_event_id` для дедупликации уведомлений; отдельный уникальный ключ бизнес-эффекта по payment/invoice для защиты от повторного начисления. |
+| `billing_refund_requests` | Одна pending-заявка на payment; account/payment/invoice связаны составным FK, автор ссылается на canonical user. Причина очищается от распознаваемых ПДн; заявка сама по себе не проводит возврат. |
 | `usage_records` | Индексы по аккаунту, проекту, началу периода и метрике; уникальный idempotency key операции, без уникальности по периоду. |
 | `agent_slots` | Уникальный `project_id`; атомарная проверка лимитов проекта. |
 
@@ -197,7 +198,15 @@
 
 Для API зарегистрирован общий error envelope. Доменные ошибки auth/authorization/not-found/conflict/agent-config validation отображаются как `401`/`403`/`404`/`409`/`422`; entitlement errors сохраняют доменные `402`/`403`/`404` и код ошибки. Отсутствующая конфигурация onboarding отвечает `503`.
 
-Окончательный project purge работает fail-closed: если Qdrant не настроен, retention-запрос остаётся `pending` (чтобы не оставить vector points без владельца); завершить его можно после подключения vector store. Проверки API выполняются с fake DB dependency; отдельные PostgreSQL-тесты проверяют миграции, agent entitlement/slot reservation, 30-дневную идемпотентность и retention purge. Реальные внешние сервисы не требуются для API-тестов. API для channels, catalog, knowledge base, leads, analytics, диалогов/сообщений, webhook, real-time и billing пока не добавлен: для соответствующих доменов ещё не подготовлены необходимые application services/контракты. Требования и оставшиеся решения см. в `API_CONTRACT.md`.
+Окончательный project purge работает fail-closed: если Qdrant не настроен, retention-запрос остаётся `pending` (чтобы не оставить vector points без владельца); завершить его можно после подключения vector store. Проверки API выполняются с fake DB dependency; отдельные PostgreSQL-тесты проверяют миграции, agent entitlement/slot reservation, 30-дневную идемпотентность и retention purge. Реальные внешние сервисы не требуются для API-тестов. API для channels, catalog, knowledge base, leads, analytics, webhook и real-time пока не добавлен: для соответствующих доменов ещё не подготовлены необходимые application services/контракты. Billing API реализован отдельно, согласно следующему разделу. Требования и оставшиеся решения см. в `API_CONTRACT.md`.
+
+### Billing API — Часть 2.5/4 (реализовано)
+
+Зарегистрированы все десять маршрутов billing из `API_CONTRACT.md`: plans, subscription, Dancoin balance/ledger, subscription change, tariff checkout, Dancoin purchase, refund request, invoices, usage и LLM models. Чтение требует `billing:read` и active membership; изменение — `billing:write` и роль `owner`/`admin`. Все выборки ограничиваются `principal.account_id`, а повторяемые POST-запросы используют общий `Idempotency-Key` механизм и существующие invoice/payment idempotency keys.
+
+Тарифные цены читаются из `TariffPlan.billing_options.periods`: `code`, положительное число `months`, `amount`, `currency` и необязательный `dancoin_grant_amount` (по умолчанию ноль). API не вносит коммерческие цены. Checkout с fake provider создаёт только pending payment; платёжный успех в тестах передаётся через fake event в существующий payment service. Fake provider разрешён только в `local`, `development` и `test`; production adapter и credentials в этом объёме отсутствуют.
+
+Смена тарифа сначала сохраняется как pending и действует без proration лишь после успешной оплаты периода. До начала оплаченного периода текущие entitlements не меняются; при наступлении периода subscription активируется вместе с отложенным Dancoin grant. Refund endpoint создаёт только pending request и audit row: он не выполняет денежный возврат и не принимает администраторских решений. Причина заявки очищается от распознаваемых ПДн до сохранения.
 
 ## 7. Решения, которые ТЗ оставляет открытыми
 
@@ -209,7 +218,7 @@
 - Срок хранения событий и аудита — 30 дней. Запрос удаления архивирует проект на 30 дней; после этого сначала удаляются Qdrant points, затем проектные записи PostgreSQL.
 - Для авторитетного источника каталога используется частичный уникальный индекс по `project_id` при `is_authoritative = true`. Для активных сессий действует ограничение не более одной записи на проект/канал/внешний чат.
 - По `usage_records` ТЗ требует индексы, но не уникальность записей по периоду; уникальное ограничение не вводится без отдельного требования.
-- Scope биллинговых таблиц определён выше; подробные бизнес-правила и реализация billing API относятся к Части 2.5.
+- Реальный payment provider, его credentials, webhook-контракт и административное решение по refund requests остаются за пределами текущего объёма billing API.
 
 ## 8. Runtime authentication flow (JWT principal)
 

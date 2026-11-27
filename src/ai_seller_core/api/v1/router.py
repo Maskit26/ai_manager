@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from ai_seller_core.api.v1.account import router as account_router
 from ai_seller_core.api.v1.agents import router as agents_router
+from ai_seller_core.api.v1.billing import router as billing_router
 from ai_seller_core.api.v1.dialogs import router as dialogs_router
 from ai_seller_core.api.v1.members import router as members_router
 from ai_seller_core.api.v1.onboarding import router as onboarding_router
@@ -18,3 +19,4 @@ router.include_router(onboarding_router)
 router.include_router(projects_router)
 router.include_router(agents_router)
 router.include_router(dialogs_router)
+router.include_router(billing_router)

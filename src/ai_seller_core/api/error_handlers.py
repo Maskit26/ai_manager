@@ -20,6 +20,12 @@ from ai_seller_core.persistence.entitlements_service import EntitlementAccessErr
 from ai_seller_core.persistence.idempotency_service import IdempotencyConflictError
 from ai_seller_core.persistence.identity_service import IdentityConflictError
 from ai_seller_core.persistence.membership_service import MembershipError
+from ai_seller_core.persistence.payment_service import (
+    BillingCatalogConfigurationError,
+    BillingPeriodNotFoundError,
+    PaymentProviderNotConfiguredError,
+    PaymentWorkflowError,
+)
 from ai_seller_core.persistence.project_service import (
     ProjectRestoreConflictError,
     ProjectStateConflictError,
@@ -179,6 +185,55 @@ async def handle_entitlement_access_error(
     )
 
 
+async def handle_payment_workflow_error(
+    request: Request,
+    _exc: PaymentWorkflowError,
+) -> JSONResponse:
+    return _error_response(
+        request,
+        status_code=409,
+        code="billing_conflict",
+        message="Billing request conflicts with the current state",
+    )
+
+
+async def handle_billing_period_error(
+    request: Request,
+    _exc: BillingPeriodNotFoundError,
+) -> JSONResponse:
+    return _error_response(
+        request,
+        status_code=422,
+        code="invalid_billing_period",
+        message="Billing period is not available for this plan",
+    )
+
+
+async def handle_payment_provider_error(
+    request: Request,
+    _exc: PaymentProviderNotConfiguredError,
+) -> JSONResponse:
+    return _error_response(
+        request,
+        status_code=503,
+        code="payment_provider_unavailable",
+        message="Payment provider is not configured",
+    )
+
+
+async def handle_billing_catalog_error(
+    request: Request,
+    exc: BillingCatalogConfigurationError,
+) -> JSONResponse:
+    logger.error("Billing catalog configuration error: %s", exc)
+    return _error_response(
+        request,
+        status_code=503,
+        code="billing_catalog_unavailable",
+        message="Billing catalog is not configured correctly",
+    )
+
+
 async def handle_agent_config_validation_error(
     request: Request,
     exc: AgentConfigValidationError,
@@ -199,6 +254,10 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ActiveMembershipRequired, handle_forbidden_error)
     app.add_exception_handler(AuthorizationError, handle_forbidden_error)
     app.add_exception_handler(EntitlementAccessError, handle_entitlement_access_error)
+    app.add_exception_handler(PaymentWorkflowError, handle_payment_workflow_error)
+    app.add_exception_handler(BillingPeriodNotFoundError, handle_billing_period_error)
+    app.add_exception_handler(PaymentProviderNotConfiguredError, handle_payment_provider_error)
+    app.add_exception_handler(BillingCatalogConfigurationError, handle_billing_catalog_error)
     app.add_exception_handler(LookupError, handle_not_found_error)
     app.add_exception_handler(IdentityConflictError, handle_conflict_error)
     app.add_exception_handler(MembershipError, handle_conflict_error)

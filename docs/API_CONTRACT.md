@@ -375,6 +375,30 @@ GET /api/v1/ws
 
 Проверки тарифов и баланса выполняются через Entitlements Engine; тарифные значения и коммерческие параметры не фиксируются этим API draft. Внешний payment adapter на локальных проверках заменяется fake.
 
+Доступ к чтению требует scope `billing:read` и активного membership в account; читать могут все роли account. Изменения требуют `billing:write` и доступны только `owner`/`admin`. Tenant берётся из principal, переданный клиентом `account_id` не используется. Все POST-маршруты требуют `Idempotency-Key`.
+
+`GET /billing/plans` возвращает активные тарифы и пакеты Dancoin. Тарифные цены читаются из `TariffPlan.billing_options.periods` и не задаются в API или коде. Формат одного элемента:
+
+```json
+{
+  "code": "monthly",
+  "months": 1,
+  "amount": "<configured decimal amount>",
+  "currency": "<configured ISO 4217 code>",
+  "dancoin_grant_amount": "<configured decimal amount>"
+}
+```
+
+`code` уникален в пределах тарифа; `months` — положительное целое число; денежные значения должны иметь не более двух знаков после запятой; `currency` — трёхбуквенный код в верхнем регистре. `dancoin_grant_amount` необязателен и по умолчанию равен нулю. Тариф без настроенных periods показывается без доступных вариантов оплаты. Неверно настроенный непустой каталог возвращает `503`, а неизвестный для тарифа period — `422`.
+
+`POST /billing/subscription/change` принимает `tariff_plan_id` и `billing_period_code`, сохраняет ожидающую смену и дату её действия на конец текущего периода. Это не создаёт оплату и не меняет текущие entitlements. `POST /billing/checkout` принимает те же поля и возвращает `202` с invoice и pending payment; смена тарифа активируется только после подтверждённого успешного платежа и наступления оплаченного периода, без proration. Для первичной подписки период начинается при checkout. Каталог Dancoin покупается через `POST /billing/dancoin/purchase` с `package_id`; маршрут также возвращает pending payment.
+
+В `local`, `development` и `test` checkout использует fake payment provider, который создаёт только pending payment. Успешный provider event подаётся напрямую в payment service в тестах; HTTP-маршрута для генерации такого события нет. Fake provider запрещён в `staging` и `production`; реальные payment credentials/списания в этот объём не входят.
+
+`POST /billing/refund-requests` принимает `payment_id` и краткую причину, создаёт только pending request и запись аудита. Деньги не возвращаются, решение администратора и изменение статуса запроса в этот API-объём не входят. Причина очищается от распознаваемых ПДн перед сохранением.
+
+`GET /billing/dancoin`, `/billing/invoices` и `/billing/usage` используют cursor pagination (`limit` по умолчанию 50, максимум 100); usage можно ограничить timezone-aware `since`/`until`. Ответы ограничиваются account principal. `GET /billing/models` показывает только активные модели и их настроенные цены.
+
 ## 9. Ограничения запросов
 
 Часть 4 требует ограничить размер тела, длину текста, количество вложений и частоту запросов. Числа пока не согласованы:

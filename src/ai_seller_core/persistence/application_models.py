@@ -51,6 +51,13 @@ _AUDIT_DIFF_FIELDS_BY_ACTION = {
     "project.created": {"to_status"},
     "project.updated": {"changed_fields"},
     "project.restored": {"from_status", "to_status"},
+    "billing.subscription_change_scheduled": {
+        "from_tariff_plan_id",
+        "to_tariff_plan_id",
+        "billing_period",
+        "effective_at",
+    },
+    "billing.refund_requested": {"payment_id"},
     "retention.expired": set(),
     "retention.retained": set(),
 }

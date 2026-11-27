@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -11,7 +12,9 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ai_seller_core.persistence.application_models import AuditLog
 from ai_seller_core.persistence.billing_models import (
+    BillingRefundRequest,
     DancoinBalance,
     DancoinPackage,
     Invoice,
@@ -56,6 +59,35 @@ class PaymentProviderMismatchError(PaymentWorkflowError):
 
 class UnsupportedProviderStatusError(PaymentWorkflowError):
     pass
+
+
+class BillingCatalogConfigurationError(RuntimeError):
+    pass
+
+
+class PaymentProviderNotConfiguredError(RuntimeError):
+    pass
+
+
+class BillingPeriodNotFoundError(ValueError):
+    pass
+
+
+class SubscriptionChangeConflictError(PaymentWorkflowError):
+    pass
+
+
+class RefundRequestConflictError(PaymentWorkflowError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class BillingPeriodOption:
+    code: str
+    months: int
+    amount: Decimal
+    currency: str
+    dancoin_grant_amount: Decimal
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +160,111 @@ class PaymentProvider(Protocol):
     ) -> ProviderRefund: ...
 
 
+def tariff_billing_periods(tariff_plan: TariffPlan) -> list[BillingPeriodOption]:
+    options = tariff_plan.billing_options
+    if not isinstance(options, dict):
+        raise BillingCatalogConfigurationError(
+            f"Tariff plan {tariff_plan.id} billing_options must be an object"
+        )
+    raw_periods = options.get("periods", [])
+    if not isinstance(raw_periods, list):
+        raise BillingCatalogConfigurationError(
+            f"Tariff plan {tariff_plan.id} billing_options.periods must be a list"
+        )
+
+    periods: list[BillingPeriodOption] = []
+    seen_codes: set[str] = set()
+    for raw_period in raw_periods:
+        if not isinstance(raw_period, dict):
+            raise BillingCatalogConfigurationError(
+                f"Tariff plan {tariff_plan.id} has a non-object billing period"
+            )
+        code = raw_period.get("code")
+        months = raw_period.get("months")
+        if not isinstance(code, str) or not code.strip() or len(code) > 100 or code != code.strip():
+            raise BillingCatalogConfigurationError(
+                f"Tariff plan {tariff_plan.id} has an invalid billing period code"
+            )
+        if code in seen_codes:
+            raise BillingCatalogConfigurationError(
+                f"Tariff plan {tariff_plan.id} has duplicate billing period codes"
+            )
+        if isinstance(months, bool) or not isinstance(months, int) or months < 1:
+            raise BillingCatalogConfigurationError(
+                f"Tariff plan {tariff_plan.id} has an invalid billing period length"
+            )
+        amount = _catalog_decimal(raw_period.get("amount"), "amount", tariff_plan.id)
+        grant_amount = _catalog_decimal(
+            raw_period.get("dancoin_grant_amount", "0.00"),
+            "dancoin_grant_amount",
+            tariff_plan.id,
+            allow_zero=True,
+        )
+        currency = raw_period.get("currency")
+        if not isinstance(currency, str):
+            raise BillingCatalogConfigurationError(
+                f"Tariff plan {tariff_plan.id} has an invalid billing currency"
+            )
+        try:
+            amount = _money(amount)
+            grant_amount = _money(grant_amount, allow_zero=True)
+            currency = _currency(currency)
+        except ValueError as error:
+            raise BillingCatalogConfigurationError(
+                f"Tariff plan {tariff_plan.id} has invalid billing terms"
+            ) from error
+        periods.append(
+            BillingPeriodOption(
+                code=code,
+                months=months,
+                amount=amount,
+                currency=currency,
+                dancoin_grant_amount=grant_amount,
+            )
+        )
+        seen_codes.add(code)
+    return periods
+
+
+def get_tariff_billing_period(
+    tariff_plan: TariffPlan,
+    period_code: str,
+) -> BillingPeriodOption:
+    for period in tariff_billing_periods(tariff_plan):
+        if period.code == period_code:
+            return period
+    raise BillingPeriodNotFoundError("Billing period is not available for this tariff plan")
+
+
+def add_billing_months(value: datetime, months: int) -> datetime:
+    start = _aware(value, "period_start")
+    month_index = start.month - 1 + months
+    year = start.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(start.day, calendar.monthrange(year, month)[1])
+    return start.replace(year=year, month=month, day=day)
+
+
+def _catalog_decimal(
+    value: object,
+    field: str,
+    tariff_plan_id: str,
+    *,
+    allow_zero: bool = False,
+) -> Decimal:
+    if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
+        raise BillingCatalogConfigurationError(
+            f"Tariff plan {tariff_plan_id} has an invalid {field}"
+        )
+    try:
+        amount = Decimal(str(value))
+        return _money(amount, allow_zero=allow_zero)
+    except (InvalidOperation, ValueError) as error:
+        raise BillingCatalogConfigurationError(
+            f"Tariff plan {tariff_plan_id} has an invalid {field}"
+        ) from error
+
+
 def _require_transaction(db: AsyncSession) -> None:
     if not db.in_transaction():
         raise RuntimeError("Payment database operations require an active transaction")
@@ -160,6 +297,130 @@ def _key(value: str) -> str:
     if not value or not value.strip() or len(value) > 200:
         raise ValueError("Idempotency keys must contain 1 to 200 non-whitespace characters")
     return value
+
+
+async def schedule_subscription_change(
+    db: AsyncSession,
+    *,
+    account_id: str,
+    tariff_plan_id: str,
+    billing_period: str,
+    actor_id: str,
+    now: datetime | None = None,
+) -> Subscription:
+    _require_transaction(db)
+    plan = await db.scalar(select(TariffPlan).where(TariffPlan.id == tariff_plan_id))
+    if plan is None:
+        raise LookupError("Tariff plan does not exist")
+    if not plan.is_active:
+        raise SubscriptionChangeConflictError("Tariff plan is inactive")
+    get_tariff_billing_period(plan, billing_period)
+
+    subscription = await db.scalar(
+        select(Subscription)
+        .where(
+            Subscription.account_id == account_id,
+            Subscription.status.in_(("trial", "active", "grace_period", "parking")),
+        )
+        .with_for_update()
+    )
+    if subscription is None:
+        raise SubscriptionChangeConflictError(
+            "A current subscription is required to schedule a plan change"
+        )
+    instant = _aware(now or datetime.now(UTC), "now")
+    effective_at = subscription.current_period_end
+    if effective_at is None or _aware(effective_at, "current_period_end") <= instant:
+        raise SubscriptionChangeConflictError(
+            "A plan change can only be scheduled before the current period ends"
+        )
+    if subscription.pending_snapshot is not None:
+        raise SubscriptionChangeConflictError(
+            "A paid subscription change is already waiting to take effect"
+        )
+    if subscription.pending_tariff_plan_id is not None:
+        if (
+            subscription.pending_tariff_plan_id == tariff_plan_id
+            and subscription.pending_billing_period == billing_period
+        ):
+            return subscription
+        raise SubscriptionChangeConflictError("Another subscription change is already scheduled")
+
+    subscription.pending_tariff_plan_id = tariff_plan_id
+    subscription.pending_billing_period = billing_period
+    subscription.pending_effective_at = _aware(effective_at, "current_period_end")
+    subscription.pending_period_start = None
+    subscription.pending_period_end = None
+    subscription.pending_snapshot = None
+    db.add(
+        AuditLog(
+            account_id=account_id,
+            actor_id=actor_id,
+            action="billing.subscription_change_scheduled",
+            entity_type="subscription",
+            entity_id=subscription.id,
+            diff={
+                "from_tariff_plan_id": subscription.tariff_plan_id,
+                "to_tariff_plan_id": tariff_plan_id,
+                "billing_period": billing_period,
+                "effective_at": subscription.pending_effective_at.isoformat(),
+            },
+        )
+    )
+    await db.flush()
+    return subscription
+
+
+async def create_refund_request(
+    db: AsyncSession,
+    *,
+    account_id: str,
+    payment_id: str,
+    requested_by: str,
+    reason: str,
+) -> BillingRefundRequest:
+    _require_transaction(db)
+    payment = await db.scalar(
+        select(Payment)
+        .where(Payment.id == payment_id, Payment.account_id == account_id)
+        .with_for_update()
+    )
+    if payment is None:
+        raise LookupError("Payment does not exist")
+    if payment.status != "succeeded":
+        raise RefundRequestConflictError("Only successful payments can be submitted for refund")
+    existing = await db.scalar(
+        select(BillingRefundRequest).where(
+            BillingRefundRequest.account_id == account_id,
+            BillingRefundRequest.payment_id == payment_id,
+        )
+    )
+    if existing is not None:
+        raise RefundRequestConflictError("A refund request already exists for this payment")
+
+    request = BillingRefundRequest(
+        id=str(uuid4()),
+        account_id=account_id,
+        payment_id=payment.id,
+        invoice_id=payment.invoice_id,
+        requested_by=requested_by,
+        reason=reason,
+        status="pending",
+        created_at=datetime.now(UTC),
+    )
+    db.add(request)
+    db.add(
+        AuditLog(
+            account_id=account_id,
+            actor_id=requested_by,
+            action="billing.refund_requested",
+            entity_type="payment",
+            entity_id=payment.id,
+            diff={"payment_id": payment.id},
+        )
+    )
+    await db.flush()
+    return request
 
 
 def _aware(value: datetime, field: str) -> datetime:
@@ -916,6 +1177,33 @@ async def _apply_success(db: AsyncSession, payment: Payment, invoice: Invoice) -
             **invoice.snapshot,
             "billing_invoice_id": invoice.id,
         }
+        period_start = _aware(invoice.period_start, "period_start")
+        period_end = _aware(invoice.period_end, "period_end")
+        if period_start > datetime.now(UTC):
+            if subscription is None:
+                raise PaymentWorkflowError(
+                    "A future tariff invoice requires an existing subscription"
+                )
+            if subscription.pending_tariff_plan_id is not None:
+                if subscription.pending_tariff_plan_id != tariff_plan_id:
+                    raise PaymentWorkflowError(
+                        "Paid tariff invoice does not match the scheduled subscription change"
+                    )
+                if subscription.current_period_end is not None and period_start < _aware(
+                    subscription.current_period_end, "current_period_end"
+                ):
+                    raise PaymentWorkflowError(
+                        "Paid tariff invoice starts before the current subscription period ends"
+                    )
+                subscription.pending_effective_at = period_start
+                subscription.pending_period_start = period_start
+                subscription.pending_period_end = period_end
+                subscription.pending_snapshot = subscription_snapshot
+                await db.flush()
+                return
+            if tariff_plan_id != subscription.tariff_plan_id:
+                raise PaymentWorkflowError("A future plan change must be scheduled before payment")
+
         if subscription is None:
             subscription = Subscription(
                 id=str(uuid4()),
@@ -923,8 +1211,8 @@ async def _apply_success(db: AsyncSession, payment: Payment, invoice: Invoice) -
                 tariff_plan_id=tariff_plan_id,
                 status="active",
                 trial_used=False,
-                current_period_start=invoice.period_start,
-                current_period_end=invoice.period_end,
+                current_period_start=period_start,
+                current_period_end=period_end,
                 grace_until=None,
                 canceled_at=None,
                 snapshot=subscription_snapshot,
@@ -933,11 +1221,17 @@ async def _apply_success(db: AsyncSession, payment: Payment, invoice: Invoice) -
         else:
             subscription.tariff_plan_id = tariff_plan_id
             subscription.status = "active"
-            subscription.current_period_start = invoice.period_start
-            subscription.current_period_end = invoice.period_end
+            subscription.current_period_start = period_start
+            subscription.current_period_end = period_end
             subscription.grace_until = None
             subscription.canceled_at = None
             subscription.snapshot = subscription_snapshot
+        subscription.pending_tariff_plan_id = None
+        subscription.pending_billing_period = None
+        subscription.pending_effective_at = None
+        subscription.pending_period_start = None
+        subscription.pending_period_end = None
+        subscription.pending_snapshot = None
         if grant_amount > _ZERO:
             await grant_dancoin(
                 db,

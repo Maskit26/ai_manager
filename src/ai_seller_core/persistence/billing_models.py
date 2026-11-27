@@ -12,6 +12,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
     func,
     text,
@@ -19,7 +20,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ai_seller_core.persistence.base import Base
-from ai_seller_core.persistence.safe_json import PrivacyRedactedJSONB
+from ai_seller_core.persistence.safe_json import PrivacyRedactedJSONB, PrivacyRedactedText
 
 
 def _new_id() -> str:
@@ -180,6 +181,11 @@ class Subscription(Base):
             "current_period_end IS NULL OR current_period_end >= current_period_start",
             name="ck_subscriptions_period_order",
         ),
+        CheckConstraint(
+            "pending_period_start IS NULL OR pending_period_end IS NULL "
+            "OR pending_period_end > pending_period_start",
+            name="ck_subscriptions_pending_period_order",
+        ),
         ForeignKeyConstraint(
             ["account_id"],
             ["accounts.id"],
@@ -190,6 +196,12 @@ class Subscription(Base):
             ["tariff_plan_id"],
             ["tariff_plans.id"],
             name="fk_subscriptions_tariff_plan",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["pending_tariff_plan_id"],
+            ["tariff_plans.id"],
+            name="fk_subscriptions_pending_tariff_plan",
             ondelete="RESTRICT",
         ),
         Index(
@@ -218,6 +230,12 @@ class Subscription(Base):
     current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     grace_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     canceled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    pending_tariff_plan_id: Mapped[str | None] = mapped_column(String(36))
+    pending_billing_period: Mapped[str | None] = mapped_column(String(100))
+    pending_effective_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    pending_period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    pending_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    pending_snapshot: Mapped[dict | None] = mapped_column(PrivacyRedactedJSONB())
     snapshot: Mapped[dict] = mapped_column(PrivacyRedactedJSONB(), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -472,6 +490,56 @@ class PaymentEvent(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class BillingRefundRequest(Base):
+    __tablename__ = "billing_refund_requests"
+    __table_args__ = (
+        UniqueConstraint(
+            "account_id",
+            "payment_id",
+            name="uq_billing_refund_requests_account_payment",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'approved', 'rejected')",
+            name="ck_billing_refund_requests_status",
+        ),
+        ForeignKeyConstraint(
+            ["account_id"],
+            ["accounts.id"],
+            name="fk_billing_refund_requests_account",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["payment_id", "account_id", "invoice_id"],
+            ["payments.id", "payments.account_id", "payments.invoice_id"],
+            name="fk_billing_refund_requests_payment",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["requested_by"],
+            ["users.id"],
+            name="fk_billing_refund_requests_user",
+            ondelete="RESTRICT",
+        ),
+        Index("ix_billing_refund_requests_account_created", "account_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    account_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    payment_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    invoice_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    requested_by: Mapped[str] = mapped_column(Text, nullable=False)
+    reason: Mapped[str] = mapped_column(PrivacyRedactedText(), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="pending",
+        server_default=text("'pending'"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class UsageRecord(Base):

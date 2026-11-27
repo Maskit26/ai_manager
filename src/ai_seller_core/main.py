@@ -66,6 +66,7 @@ def create_app() -> FastAPI:
                 "description": "Tenant-scoped project management and lifecycle.",
             },
             {"name": "agents", "description": "Agent draft and release management."},
+            {"name": "billing", "description": "Account billing, subscriptions, and usage."},
         ],
     )
     register_exception_handlers(app)

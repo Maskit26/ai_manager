@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
 from sqlalchemy import func, select
@@ -16,7 +16,10 @@ from ai_seller_core.persistence.billing_models import (
     Subscription,
     TariffPlan,
 )
-from ai_seller_core.persistence.billing_service import _available_balance
+from ai_seller_core.persistence.billing_service import (
+    _available_balance,
+    grant_dancoin,
+)
 from ai_seller_core.persistence.models import Account, AccountEntitlement, Project
 
 ENTITLEMENT_TTL = timedelta(seconds=60)
@@ -251,6 +254,8 @@ async def get_entitlements(
     _require_transaction(db)
     instant = _utc(now or datetime.now(UTC))
     row = await _ensure_entitlement_row(db, account_id)
+    if await _activate_due_subscription_change(db, account_id=account_id, now=instant):
+        row.expires_at = instant
     if row.expires_at is not None and _utc(row.expires_at) > instant:
         return _snapshot_from_row(row)
 
@@ -311,6 +316,14 @@ async def get_entitlements(
     )
 
     expires_at = instant + ENTITLEMENT_TTL
+    if (
+        subscription is not None
+        and subscription.pending_snapshot is not None
+        and subscription.pending_period_start is not None
+    ):
+        pending_start = _utc(subscription.pending_period_start)
+        if pending_start > instant:
+            expires_at = min(expires_at, pending_start)
     snapshot = {
         "subscription_status": subscription.status if subscription is not None else None,
         "current_period_end": (
@@ -341,6 +354,74 @@ async def get_entitlements(
     row.expires_at = expires_at
     await db.flush()
     return _snapshot_from_row(row)
+
+
+async def _activate_due_subscription_change(
+    db: AsyncSession,
+    *,
+    account_id: str,
+    now: datetime,
+) -> bool:
+    subscription = await db.scalar(
+        select(Subscription)
+        .where(
+            Subscription.account_id == account_id,
+            Subscription.pending_snapshot.is_not(None),
+            Subscription.pending_period_start <= now,
+        )
+        .with_for_update()
+    )
+    if subscription is None:
+        return False
+
+    snapshot = subscription.pending_snapshot
+    if not isinstance(snapshot, dict):
+        raise EntitlementConfigurationError("Pending subscription snapshot must be an object")
+    catalog_item = snapshot.get("catalog_item")
+    invoice_id = snapshot.get("billing_invoice_id")
+    if (
+        not isinstance(catalog_item, dict)
+        or not isinstance(catalog_item.get("id"), str)
+        or not isinstance(invoice_id, str)
+    ):
+        raise EntitlementConfigurationError("Pending subscription snapshot is incomplete")
+    if subscription.pending_tariff_plan_id != catalog_item["id"]:
+        raise EntitlementConfigurationError("Pending subscription plan does not match its snapshot")
+    if subscription.pending_period_start is None or subscription.pending_period_end is None:
+        raise EntitlementConfigurationError("Pending subscription period is incomplete")
+
+    grant_value = snapshot.get("dancoin_grant_amount", "0.00")
+    try:
+        grant_amount = Decimal(str(grant_value))
+    except (InvalidOperation, ValueError) as error:
+        raise EntitlementConfigurationError(
+            "Pending subscription Dancoin grant is invalid"
+        ) from error
+    if not grant_amount.is_finite() or grant_amount < 0:
+        raise EntitlementConfigurationError("Pending subscription Dancoin grant is invalid")
+
+    subscription.tariff_plan_id = catalog_item["id"]
+    subscription.status = "active"
+    subscription.current_period_start = _utc(subscription.pending_period_start)
+    subscription.current_period_end = _utc(subscription.pending_period_end)
+    subscription.grace_until = None
+    subscription.canceled_at = None
+    subscription.snapshot = snapshot
+    subscription.pending_tariff_plan_id = None
+    subscription.pending_billing_period = None
+    subscription.pending_effective_at = None
+    subscription.pending_period_start = None
+    subscription.pending_period_end = None
+    subscription.pending_snapshot = None
+    if grant_amount > 0:
+        await grant_dancoin(
+            db,
+            account_id=account_id,
+            reference=f"subscription-grant:{invoice_id}",
+            amount=grant_amount,
+        )
+    await db.flush()
+    return True
 
 
 def _has_active_subscription(snapshot: EntitlementSnapshot, now: datetime) -> bool:
