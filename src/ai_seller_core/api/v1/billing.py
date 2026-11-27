@@ -72,7 +72,14 @@ router = APIRouter(tags=["billing"], responses=COMMON_ERROR_RESPONSES)
 _CURRENT_SUBSCRIPTION_STATUSES = ("trial", "active", "grace_period", "parking")
 
 
-@router.get("/billing/plans", response_model=BillingPlansResponse)
+@router.get(
+    "/billing/plans",
+    response_model=BillingPlansResponse,
+    description=(
+        "Возвращает активные тарифные планы и пакеты Dancoin из каталога. "
+        "Используется интерфейсом для отображения условий подписки и вариантов пополнения баланса."
+    ),
+)
 async def list_billing_plans(
     session: DatabaseSession,
     _principal: BillingReader,
@@ -122,7 +129,14 @@ async def list_billing_plans(
     )
 
 
-@router.get("/billing/subscription", response_model=BillingSubscriptionResponse)
+@router.get(
+    "/billing/subscription",
+    response_model=BillingSubscriptionResponse,
+    description=(
+        "Возвращает данные о подписке аккаунта и доступных ему возможностях. "
+        "Если активной подписки нет, возвращается последняя отменённая подписка."
+    ),
+)
 async def read_subscription(
     session: DatabaseSession,
     principal: BillingReader,
@@ -195,7 +209,14 @@ async def read_subscription(
     )
 
 
-@router.get("/billing/dancoin", response_model=DancoinResponse)
+@router.get(
+    "/billing/dancoin",
+    response_model=DancoinResponse,
+    description=(
+        "Возвращает баланс Dancoin и историю транзакций аккаунта. "
+        "Поддерживает курсорную пагинацию для загрузки истории частями."
+    ),
+)
 async def read_dancoin(
     session: DatabaseSession,
     principal: BillingReader,
@@ -261,6 +282,10 @@ async def read_dancoin(
     "/billing/subscription/change",
     response_model=SubscriptionChangeResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    description=(
+        "Планирует смену тарифного плана подписки на выбранный период. "
+        "Новые условия вступают в силу с начала указанного оплаченного периода."
+    ),
 )
 async def change_subscription(
     body: SubscriptionChangeRequest,
@@ -290,6 +315,10 @@ async def change_subscription(
     "/billing/checkout",
     response_model=CheckoutResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    description=(
+        "Создаёт счёт и инициирует оплату подписки на выбранный тариф. "
+        "Изменение подписки выполняется после подтверждения платежа."
+    ),
 )
 async def checkout_subscription(
     body: CheckoutRequest,
@@ -335,6 +364,10 @@ async def checkout_subscription(
     "/billing/dancoin/purchase",
     response_model=CheckoutResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    description=(
+        "Создаёт счёт и инициирует оплату выбранного активного пакета Dancoin. "
+        "Баланс пополняется после подтверждения платежа."
+    ),
 )
 async def purchase_dancoin(
     body: DancoinPurchaseRequest,
@@ -394,6 +427,11 @@ async def purchase_dancoin(
     "/billing/refund-requests",
     response_model=RefundRequestRead,
     status_code=status.HTTP_202_ACCEPTED,
+    description=(
+        "Регистрирует запрос на возврат средств по указанному платежу и "
+        "сохраняет причину обращения. "
+        "Сам возврат этим запросом не проводится, решение обрабатывается отдельно."
+    ),
 )
 async def request_refund(
     body: RefundRequestBody,
@@ -428,7 +466,14 @@ async def request_refund(
     return RefundRequestRead.model_validate(response_data)
 
 
-@router.get("/billing/invoices", response_model=InvoicePageResponse)
+@router.get(
+    "/billing/invoices",
+    response_model=InvoicePageResponse,
+    description=(
+        "Возвращает счета текущего аккаунта с суммой, валютой, периодом и статусом. "
+        "Поддерживает курсорную пагинацию для просмотра истории счетов."
+    ),
+)
 async def list_invoices(
     session: DatabaseSession,
     principal: BillingReader,
@@ -468,7 +513,14 @@ async def list_invoices(
     )
 
 
-@router.get("/billing/usage", response_model=UsagePageResponse)
+@router.get(
+    "/billing/usage",
+    response_model=UsagePageResponse,
+    description=(
+        "Возвращает записи потребления ресурсов аккаунта за заданный временной период. "
+        "Поддерживает фильтрацию по датам и постраничную загрузку результатов."
+    ),
+)
 async def list_usage(
     session: DatabaseSession,
     principal: BillingReader,
@@ -529,7 +581,14 @@ async def list_usage(
     )
 
 
-@router.get("/billing/models", response_model=BillingModelsResponse)
+@router.get(
+    "/billing/models",
+    response_model=BillingModelsResponse,
+    description=(
+        "Возвращает активные языковые модели и сведения об их стоимости. "
+        "Ответ включает цены за входные и выходные токены и доступные ограничения контекста."
+    ),
+)
 async def list_billing_models(
     session: DatabaseSession,
     _principal: BillingReader,

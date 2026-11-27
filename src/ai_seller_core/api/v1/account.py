@@ -11,7 +11,15 @@ router = APIRouter(
 )
 
 
-@router.get("", response_model=AccountRead, summary="Get current account")
+@router.get(
+    "",
+    response_model=AccountRead,
+    summary="Get current account",
+    description=(
+        "Возвращает сведения об аккаунте, определённом по учётным данным пользователя. "
+        "Используется клиентом для отображения текущего аккаунта."
+    ),
+)
 async def get_current_account(
     principal: AccountReader,
     session: DatabaseSession,

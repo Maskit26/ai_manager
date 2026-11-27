@@ -82,6 +82,10 @@ def _deletion_response(request: ProjectDeletionRequest) -> dict[str, Any]:
     "",
     response_model=ProjectListResponse,
     summary="List current account projects",
+    description=(
+        "Возвращает проекты текущего аккаунта с фильтрацией по статусу. "
+        "Поддерживает постраничную навигацию через параметры запроса."
+    ),
 )
 async def list_projects(
     principal: ProjectReader,
@@ -101,6 +105,10 @@ async def list_projects(
     "/{project_id}",
     response_model=ProjectRead,
     summary="Get project",
+    description=(
+        "Возвращает данные проекта по его идентификатору. "
+        "Доступ предоставляется только к проектам текущего аккаунта."
+    ),
 )
 async def get_project(
     project_id: UUID,
@@ -121,6 +129,10 @@ async def get_project(
     response_model=ProjectRead,
     status_code=status.HTTP_201_CREATED,
     summary="Create a project",
+    description=(
+        "Создаёт проект в текущем аккаунте с заданными настройками локали и часового пояса. "
+        "Используется при добавлении нового рабочего пространства."
+    ),
 )
 async def create_project(
     body: ProjectCreateRequest,
@@ -152,6 +164,10 @@ async def create_project(
     "/{project_id}",
     response_model=ProjectRead,
     summary="Update a project",
+    description=(
+        "Обновляет настройки проекта по его идентификатору. "
+        "В запросе можно передать новые значения локали и часового пояса."
+    ),
 )
 async def update_project(
     project_id: UUID,
@@ -216,6 +232,10 @@ async def _archive_project_request(
     response_model=ProjectDeletionRead,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Archive a project",
+    description=(
+        "Переводит проект в архивное состояние и создаёт запрос на удаление. "
+        "Данные не удаляются немедленно, а обрабатываются по предусмотренному процессу хранения."
+    ),
 )
 async def archive_project(
     project_id: UUID,
@@ -237,6 +257,10 @@ async def archive_project(
     response_model=ProjectDeletionRead,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Request project deletion",
+    description=(
+        "Создаёт запрос на удаление проекта текущего аккаунта. "
+        "Проект переводится в состояние ожидания удаления, а данные не удаляются немедленно."
+    ),
 )
 async def delete_project(
     project_id: UUID,
@@ -257,6 +281,10 @@ async def delete_project(
     "/{project_id}/restore",
     response_model=ProjectRead,
     summary="Restore an archived project",
+    description=(
+        "Восстанавливает архивированный проект и возвращает его в активное состояние. "
+        "Используется для возобновления работы с проектом до завершения удаления."
+    ),
 )
 async def restore_project(
     project_id: UUID,

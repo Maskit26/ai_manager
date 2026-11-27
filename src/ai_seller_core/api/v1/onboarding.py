@@ -24,6 +24,10 @@ router = APIRouter(
     "",
     response_model=OnboardingAccountRead,
     summary="Provision an account and its initial owner",
+    description=(
+        "Создаёт аккаунт и назначает его первоначального владельца. "
+        "Эндпоинт предназначен для внутреннего онбординга и требует серверных учётных данных."
+    ),
 )
 async def provision_account(
     body: OnboardingAccountRequest,

@@ -138,6 +138,10 @@ def _operator_dialog_ids(project_id: str, principal: DialogReader):
     "/projects/{project_id}/dialogs",
     response_model=DialogListResponse,
     responses=COMMON_ERROR_RESPONSES,
+    description=(
+        "Возвращает список диалогов проекта с фильтрацией по состоянию. "
+        "Поддерживает курсорную пагинацию и учитывает права доступа пользователя."
+    ),
 )
 async def list_project_dialogs(
     project_id: str,
@@ -195,6 +199,10 @@ async def list_project_dialogs(
     "/dialogs/{dialog_id}",
     response_model=DialogRead,
     responses=COMMON_ERROR_RESPONSES,
+    description=(
+        "Возвращает данные диалога по его идентификатору. "
+        "Перед ответом проверяется доступ пользователя к диалогу в рамках его аккаунта и проекта."
+    ),
 )
 async def get_dialog(
     dialog_id: str,
@@ -214,6 +222,10 @@ async def get_dialog(
     "/dialogs/{dialog_id}/messages",
     response_model=DialogMessagePageResponse,
     responses=COMMON_ERROR_RESPONSES,
+    description=(
+        "Возвращает страницу сообщений выбранного диалога с курсорной пагинацией. "
+        "Позволяет загружать историю частями, не запрашивая всю переписку сразу."
+    ),
 )
 async def list_dialog_messages(
     dialog_id: str,
@@ -264,6 +276,11 @@ async def list_dialog_messages(
     response_model=DialogIngressAccepted,
     status_code=status.HTTP_202_ACCEPTED,
     responses=COMMON_ERROR_RESPONSES,
+    description=(
+        "Принимает входящее сообщение для проекта и сохраняет событие в Inbox. "
+        "Обработка передаётся фоновому worker-у, а повтор запроса с тем же ключом "
+        "идемпотентности не создаёт дубликат."
+    ),
 )
 async def accept_dialog_message(
     project_id: str,
@@ -394,6 +411,10 @@ async def _submit_dialog_write(
     response_model=DialogWriteAccepted,
     status_code=status.HTTP_202_ACCEPTED,
     responses=COMMON_ERROR_RESPONSES,
+    description=(
+        "Принимает сообщение оператора для активного диалога. "
+        "Запись передаётся фоновой обработке для сохранения и доставки."
+    ),
 )
 async def submit_operator_message(
     dialog_id: str,
@@ -418,6 +439,10 @@ async def submit_operator_message(
     response_model=DialogWriteAccepted,
     status_code=status.HTTP_202_ACCEPTED,
     responses=COMMON_ERROR_RESPONSES,
+    description=(
+        "Добавляет внутреннюю системную заметку в активный диалог. "
+        "Заметка сохраняется в истории и не отправляется клиенту как сообщение."
+    ),
 )
 async def submit_system_note(
     dialog_id: str,

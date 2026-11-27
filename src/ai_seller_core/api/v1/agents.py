@@ -80,6 +80,10 @@ async def _execute_agent_write(
     "",
     response_model=AgentStateRead,
     summary="Get project agent and current draft",
+    description=(
+        "Возвращает состояние агента проекта и его текущий черновик конфигурации. "
+        "Используется для просмотра настроек перед их изменением или публикацией."
+    ),
 )
 async def get_project_agent(
     project_id: UUID,
@@ -100,6 +104,10 @@ async def get_project_agent(
     response_model=AgentStateRead,
     status_code=status.HTTP_201_CREATED,
     summary="Create the project agent",
+    description=(
+        "Создаёт агента для указанного проекта. "
+        "В ответе возвращается состояние агента и его начальный черновик конфигурации."
+    ),
 )
 async def create_project_agent(
     project_id: UUID,
@@ -135,6 +143,10 @@ async def create_project_agent(
     "/draft",
     response_model=AgentStateRead,
     summary="Save the agent draft",
+    description=(
+        "Сохраняет новую черновую конфигурацию агента проекта. "
+        "Позволяет изменить настройки до публикации следующего релиза."
+    ),
 )
 async def update_agent_draft(
     project_id: UUID,
@@ -176,6 +188,10 @@ async def update_agent_draft(
     response_model=AgentReleaseRead,
     status_code=status.HTTP_201_CREATED,
     summary="Publish the current agent draft",
+    description=(
+        "Публикует текущий черновик как новый релиз агента. "
+        "Опубликованный релиз становится активной конфигурацией для последующих диалогов."
+    ),
 )
 async def publish_project_agent(
     project_id: UUID,
@@ -206,6 +222,10 @@ async def publish_project_agent(
     "/rollback",
     response_model=AgentStateRead,
     summary="Roll back to an agent release",
+    description=(
+        "Переключает агента на ранее опубликованный релиз, указанный в запросе. "
+        "Позволяет вернуться к сохранённой версии конфигурации."
+    ),
 )
 async def rollback_project_agent(
     project_id: UUID,

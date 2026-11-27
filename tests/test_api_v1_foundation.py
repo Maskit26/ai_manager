@@ -312,6 +312,18 @@ def test_api_openapi_lists_versioned_routes_and_error_examples(api_client):
 
     assert response.status_code == 200
     schema = response.json()
+    http_methods = {"get", "post", "put", "patch", "delete"}
+    for path, path_item in schema["paths"].items():
+        for method in http_methods:
+            operation = path_item.get(method)
+            if operation is None:
+                continue
+            description = operation.get("description", "")
+            assert description.strip(), f"{method.upper()} {path} has no OpenAPI description"
+            assert any(
+                "а" <= character.lower() <= "я" or character.lower() == "ё"
+                for character in description
+            ), f"{method.upper()} {path} has no Russian OpenAPI description"
     assert "/api/v1/account" in schema["paths"]
     assert "/api/v1/account/members" in schema["paths"]
     assert "/api/v1/account/members/{user_id}" in schema["paths"]
@@ -320,6 +332,20 @@ def test_api_openapi_lists_versioned_routes_and_error_examples(api_client):
     assert "/api/v1/projects/{project_id}/agent" in schema["paths"]
     assert "/api/v1/projects/{project_id}/agent/draft" in schema["paths"]
     assert "/api/v1/projects/{project_id}/agent/publish" in schema["paths"]
+    dialog_write_paths = (
+        "/api/v1/projects/{project_id}/dialogs",
+        "/api/v1/dialogs/{dialog_id}/messages",
+        "/api/v1/dialogs/{dialog_id}/notes",
+    )
+    for path in dialog_write_paths:
+        operation = schema["paths"][path]["post"]
+        assert operation["security"]
+        assert any(
+            parameter.get("in") == "header"
+            and parameter.get("name", "").lower() == "idempotency-key"
+            and parameter.get("required") is True
+            for parameter in operation.get("parameters", [])
+        )
     error_schema = schema["components"]["schemas"]["ErrorResponse"]
     assert error_schema["examples"][0]["error"]["code"] == "forbidden"
     project_responses = schema["paths"]["/api/v1/projects"]["get"]["responses"]

@@ -47,6 +47,10 @@ def _member_response(membership: AccountMembership) -> dict[str, Any]:
     "",
     response_model=AccountMemberListResponse,
     summary="List account members",
+    description=(
+        "Возвращает участников текущего аккаунта с их ролями и статусами. "
+        "Позволяет просматривать состав команды и назначенные права доступа."
+    ),
 )
 async def list_members(
     principal: AccountMemberReader,
@@ -68,6 +72,10 @@ async def list_members(
     response_model=AccountMemberRead,
     status_code=status.HTTP_201_CREATED,
     summary="Add an account member",
+    description=(
+        "Добавляет пользователя в текущий аккаунт с указанной ролью. "
+        "Используется для предоставления участнику доступа к ресурсам аккаунта."
+    ),
 )
 async def create_member(
     body: AccountMemberCreateRequest,
@@ -101,6 +109,10 @@ async def create_member(
     "/{user_id}",
     response_model=AccountMemberRead,
     summary="Change an account member role or status",
+    description=(
+        "Изменяет роль или статус участника аккаунта по идентификатору пользователя. "
+        "Позволяет обновить его доступ без повторного добавления в аккаунт."
+    ),
 )
 async def update_member(
     user_id: UUID,
@@ -149,6 +161,10 @@ async def update_member(
     "/{user_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Remove an account member",
+    description=(
+        "Удаляет участника из текущего аккаунта по идентификатору пользователя. "
+        "Используется для отзыва его доступа к ресурсам аккаунта."
+    ),
 )
 async def delete_member(
     user_id: UUID,

@@ -9,7 +9,7 @@ from alembic.config import Config
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
-from sqlalchemy import insert, select, text
+from sqlalchemy import func, insert, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from ai_seller_core.api.auth import get_current_principal
@@ -29,6 +29,7 @@ from ai_seller_core.persistence.models import (
     Channel,
     ChatMessage,
     DialogSession,
+    InboxEvent,
     OutboxMessage,
     Project,
 )
@@ -170,7 +171,7 @@ def test_authenticated_dialog_api_and_development_worker(monkeypatch) -> None:
                     "customer_id": "customer-1",
                     "external_chat_id": "chat-1",
                     "external_message_id": "external-message-1",
-                    "text": "hello",
+                    "text": "hello test-onboarding-server-secret-32-chars",
                 }
                 headers = {"Idempotency-Key": "inbound-message-1"}
                 accepted = await client.post(
@@ -179,6 +180,7 @@ def test_authenticated_dialog_api_and_development_worker(monkeypatch) -> None:
                     headers=headers,
                 )
                 assert accepted.status_code == 202
+                assert "test-onboarding-server-secret-32-chars" not in accepted.text
                 first_response = accepted.json()
                 replay = await client.post(
                     f"/api/v1/projects/{project_id}/dialogs",
@@ -187,6 +189,33 @@ def test_authenticated_dialog_api_and_development_worker(monkeypatch) -> None:
                 )
                 assert replay.status_code == 202
                 assert replay.json() == first_response
+                conflict = await client.post(
+                    f"/api/v1/projects/{project_id}/dialogs",
+                    json={**request_body, "text": "changed request body"},
+                    headers=headers,
+                )
+                assert conflict.status_code == 409
+                assert conflict.json()["error"]["code"] == "idempotency_conflict"
+                async with session_factory() as session:
+                    inbox_count = await session.scalar(
+                        select(func.count())
+                        .select_from(InboxEvent)
+                        .where(
+                            InboxEvent.project_id == project_id,
+                            InboxEvent.provider_event_id == headers["Idempotency-Key"],
+                        )
+                    )
+                    inbound_job_count = await session.scalar(
+                        select(func.count())
+                        .select_from(BackgroundJob)
+                        .where(
+                            BackgroundJob.project_id == project_id,
+                            BackgroundJob.queue == "inbound_dialog",
+                            BackgroundJob.idempotency_key == f"inbox:{first_response['event_id']}",
+                        )
+                    )
+                assert inbox_count == 1
+                assert inbound_job_count == 1
 
                 await run_worker("inbound_dialog")
                 await run_worker("outbound_delivery")
@@ -235,6 +264,14 @@ def test_authenticated_dialog_api_and_development_worker(monkeypatch) -> None:
                     f"/api/v1/dialogs/{dialog_id}/messages?cursor=not-a-cursor"
                 )
                 assert invalid_cursor.status_code == 422
+                invalid_low_limit = await client.get(
+                    f"/api/v1/dialogs/{dialog_id}/messages?limit=0"
+                )
+                invalid_high_limit = await client.get(
+                    f"/api/v1/dialogs/{dialog_id}/messages?limit=101"
+                )
+                assert invalid_low_limit.status_code == 422
+                assert invalid_high_limit.status_code == 422
 
                 current_principal[0] = Principal(
                     user_id=str(uuid4()),
