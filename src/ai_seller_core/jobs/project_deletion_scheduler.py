@@ -6,6 +6,9 @@ import httpx
 
 from ai_seller_core.core.config import get_settings
 from ai_seller_core.persistence.base import SessionFactory, database_lifespan
+from ai_seller_core.persistence.idempotency_service import (
+    purge_expired_idempotency_records,
+)
 from ai_seller_core.persistence.project_deletion import (
     ProjectVectorStore,
     QdrantProjectVectorStore,
@@ -47,6 +50,11 @@ async def run_once() -> tuple[int, tuple[int, int, int]]:
                     )
                 async with session.begin():
                     expired_activity = await purge_expired_activity(session)
+                    expired_idempotency = await purge_expired_idempotency_records(session)
+                    logging.getLogger(__name__).info(
+                        "Expired API idempotency records purged: %s",
+                        expired_idempotency,
+                    )
     logger.info(
         "Project deletion maintenance completed",
         extra={

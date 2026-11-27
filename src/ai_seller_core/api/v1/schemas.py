@@ -1,7 +1,8 @@
-from typing import Any
+from datetime import datetime
+from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ErrorDetail(BaseModel):
@@ -102,6 +103,146 @@ class ProjectListResponse(BaseModel):
     )
 
 
+class ProjectCreateRequest(BaseModel):
+    locale: str = Field(min_length=1, max_length=32)
+    timezone: str = Field(min_length=1, max_length=64)
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"examples": [{"locale": "ru-RU", "timezone": "Europe/Moscow"}]},
+    )
+
+
+class ProjectUpdateRequest(BaseModel):
+    locale: str | None = Field(default=None, min_length=1, max_length=32)
+    timezone: str | None = Field(default=None, min_length=1, max_length=64)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def require_update_field(self) -> "ProjectUpdateRequest":
+        if self.locale is None and self.timezone is None:
+            raise ValueError("At least one project field must be provided")
+        return self
+
+
+class ProjectDeletionRead(BaseModel):
+    project_id: UUID
+    project_status: Literal["archived"]
+    deletion_status: Literal["pending"]
+    previous_status: str
+    requested_at: datetime
+
+
+class AccountMemberRead(BaseModel):
+    user_id: UUID
+    role: Literal["owner", "admin", "operator"]
+    status: Literal["active", "disabled"]
+
+
+class AccountMemberListResponse(BaseModel):
+    items: list[AccountMemberRead]
+
+
+class AccountMemberCreateRequest(BaseModel):
+    user_id: UUID
+    role: Literal["admin", "operator"]
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "examples": [
+                {
+                    "user_id": "dfe2eaf8-797b-4442-9d65-f6468751d9a8",
+                    "role": "operator",
+                }
+            ]
+        },
+    )
+
+
+class AccountMemberUpdateRequest(BaseModel):
+    role: Literal["admin", "operator"] | None = None
+    status: Literal["active", "disabled"] | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def require_one_update_field(self) -> "AccountMemberUpdateRequest":
+        if (self.role is None) == (self.status is None):
+            raise ValueError("Specify exactly one of role or status")
+        return self
+
+
+class OnboardingAccountRequest(BaseModel):
+    identity_provider: str = Field(default="bitrix", min_length=1, max_length=100)
+    external_account_id: str = Field(min_length=1)
+    external_owner_id: str = Field(min_length=1)
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "examples": [
+                {
+                    "identity_provider": "bitrix",
+                    "external_account_id": "company-42",
+                    "external_owner_id": "user-108",
+                }
+            ]
+        },
+    )
+
+
+class OnboardingAccountRead(BaseModel):
+    account_id: UUID
+    owner_user_id: UUID
+    owner_membership_created: bool
+
+
+class AgentDraftUpdateRequest(BaseModel):
+    config: dict[str, Any]
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "examples": [
+                {
+                    "config": {
+                        "prompt": "Answer customer questions",
+                        "tone": "helpful",
+                    }
+                }
+            ]
+        },
+    )
+
+
+class AgentStateRead(BaseModel):
+    id: UUID
+    project_id: UUID
+    status: str
+    active_release_id: UUID | None
+    draft_config: dict[str, Any]
+
+
+class AgentReleaseRead(BaseModel):
+    id: UUID
+    project_id: UUID
+    agent_id: UUID
+    version: int
+    snapshot: dict[str, Any]
+    created_at: datetime
+
+
+class AgentRollbackRequest(BaseModel):
+    release_id: UUID
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"examples": [{"release_id": "a8447a6b-1fc9-4e8f-a5d4-2812f3d9ce37"}]},
+    )
+
+
 COMMON_ERROR_RESPONSES: dict[int, dict[str, Any]] = {
     400: {"model": ErrorResponse, "description": "Malformed request."},
     401: {"model": ErrorResponse, "description": "Authentication required."},
@@ -114,4 +255,5 @@ COMMON_ERROR_RESPONSES: dict[int, dict[str, Any]] = {
     422: {"model": ErrorResponse, "description": "Request validation failed."},
     429: {"model": ErrorResponse, "description": "Rate limit exceeded."},
     500: {"model": ErrorResponse, "description": "Unexpected server error."},
+    503: {"model": ErrorResponse, "description": "Service is not configured."},
 }

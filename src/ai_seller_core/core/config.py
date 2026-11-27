@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     jwt_public_keys: dict[str, str] = Field(default_factory=dict)
     jwt_standalone_enabled: bool = False
     jwt_standalone_secret: SecretStr | None = None
+    onboarding_server_credential: SecretStr | None = None
     database_url: SecretStr
     qdrant_url: AnyHttpUrl | None = None
     qdrant_api_key: SecretStr | None = None
@@ -63,7 +64,12 @@ class Settings(BaseSettings):
             raise ValueError("DATABASE_URL must use the postgresql+asyncpg driver")
         return value
 
-    @field_validator("qdrant_api_key", "secret_encryption_key", "jwt_standalone_secret")
+    @field_validator(
+        "qdrant_api_key",
+        "secret_encryption_key",
+        "jwt_standalone_secret",
+        "onboarding_server_credential",
+    )
     @classmethod
     def validate_optional_secrets(cls, value: SecretStr | None) -> SecretStr | None:
         if value is None:
@@ -73,6 +79,16 @@ class Settings(BaseSettings):
             raise ValueError("Configured secrets must not be empty")
         if _is_placeholder(raw_value):
             raise ValueError("Configured secrets must not contain placeholders")
+        return value
+
+    @field_validator("onboarding_server_credential")
+    @classmethod
+    def validate_onboarding_server_credential(
+        cls,
+        value: SecretStr | None,
+    ) -> SecretStr | None:
+        if value is not None and len(value.get_secret_value()) < 32:
+            raise ValueError("ONBOARDING_SERVER_CREDENTIAL must be at least 32 characters")
         return value
 
     @field_validator("jwt_public_keys")

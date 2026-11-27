@@ -1137,6 +1137,8 @@ F31 — механизм расширения, а не единый универ
   1. `tests/test_accounts_projects.py::test_accounts_projects_offline_migration` — offline-путь миграции `20261204_dialog_operator_assignments` генерирует PostgreSQL `DO`-проверки вместо выполнения запросов через `MockConnection`; online-проверки данных сохранены.
   2. `tests/test_accounts_projects.py::test_accounts_projects_postgresql_migrations` — ожидание revision обновлено с `20261203_entitlement_invalidate` на актуальную head `20261204_dialog_assignments`.
   Критерий готовности выполнен: оба целевых теста проходят; online-проверки миграции и генерация offline SQL сохранены.
+- **Настроить явный `path_separator` для Alembic**: добавить настройку в секцию `[alembic]` файла `alembic.ini`, чтобы убрать предупреждение о переходе на legacy splitting для `prepend_sys_path`. Критерий готовности: конфигурация Alembic загружается без этого предупреждения, а текущие сценарии миграций продолжают работать.
+- **Заменить deprecated-интеграцию Starlette TestClient/httpx в тесте обработки ошибок**: обновить `tests/test_error_safety.py` по используемому в проекте подходу `httpx.AsyncClient` + `httpx.ASGITransport`, не подавляя предупреждение фильтром. Критерий готовности: целевой тест проходит, проверяя ответ 500 и маскирование ПДн, без предупреждения о deprecated-интеграции.
 
 ### Требует будущего этапа или внешнего окружения
 - **Draft preview и подключение внешних каналов**: тестовый диалог на draft, UI/сайт и реальная обработка MAX относятся к последующим runtime/API работам, а не к схеме БД Части 2. Код и mock-тесты можно разрабатывать локально; end-to-end проверка требует доступного внешнего канала и credentials.

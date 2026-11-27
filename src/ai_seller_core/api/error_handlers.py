@@ -12,8 +12,18 @@ from ai_seller_core.api.auth import (
     UnknownIdentityError,
 )
 from ai_seller_core.persistence.access_policy import AuthorizationError
+from ai_seller_core.persistence.agent_releases import (
+    AgentAlreadyExistsError,
+    AgentConfigValidationError,
+)
+from ai_seller_core.persistence.entitlements_service import EntitlementAccessError
+from ai_seller_core.persistence.idempotency_service import IdempotencyConflictError
 from ai_seller_core.persistence.identity_service import IdentityConflictError
 from ai_seller_core.persistence.membership_service import MembershipError
+from ai_seller_core.persistence.project_service import (
+    ProjectRestoreConflictError,
+    ProjectStateConflictError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +155,42 @@ async def handle_conflict_error(request: Request, _exc: Exception) -> JSONRespon
     )
 
 
+async def handle_idempotency_conflict_error(
+    request: Request,
+    _exc: IdempotencyConflictError,
+) -> JSONResponse:
+    return _error_response(
+        request,
+        status_code=409,
+        code="idempotency_conflict",
+        message="Idempotency-Key was already used with a different request",
+    )
+
+
+async def handle_entitlement_access_error(
+    request: Request,
+    exc: EntitlementAccessError,
+) -> JSONResponse:
+    return _error_response(
+        request,
+        status_code=exc.status_code,
+        code=exc.code,
+        message=exc.message,
+    )
+
+
+async def handle_agent_config_validation_error(
+    request: Request,
+    exc: AgentConfigValidationError,
+) -> JSONResponse:
+    return _error_response(
+        request,
+        status_code=422,
+        code="invalid_agent_config",
+        message=str(exc),
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(StarletteHTTPException, handle_http_error)
     app.add_exception_handler(RequestValidationError, handle_request_validation_error)
@@ -152,9 +198,21 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(UnknownIdentityError, handle_unauthorized_error)
     app.add_exception_handler(ActiveMembershipRequired, handle_forbidden_error)
     app.add_exception_handler(AuthorizationError, handle_forbidden_error)
+    app.add_exception_handler(EntitlementAccessError, handle_entitlement_access_error)
     app.add_exception_handler(LookupError, handle_not_found_error)
     app.add_exception_handler(IdentityConflictError, handle_conflict_error)
     app.add_exception_handler(MembershipError, handle_conflict_error)
+    app.add_exception_handler(AgentAlreadyExistsError, handle_conflict_error)
+    app.add_exception_handler(ProjectRestoreConflictError, handle_conflict_error)
+    app.add_exception_handler(ProjectStateConflictError, handle_conflict_error)
+    app.add_exception_handler(
+        IdempotencyConflictError,
+        handle_idempotency_conflict_error,
+    )
+    app.add_exception_handler(
+        AgentConfigValidationError,
+        handle_agent_config_validation_error,
+    )
     app.add_exception_handler(Exception, handle_unexpected_error)
 
 

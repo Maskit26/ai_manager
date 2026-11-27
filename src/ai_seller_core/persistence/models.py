@@ -167,6 +167,32 @@ class User(Base):
     )
 
 
+class ApiIdempotencyRecord(Base):
+    __tablename__ = "api_idempotency_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "scope",
+            "operation",
+            "key_hash",
+            name="uq_api_idempotency_scope_operation_key",
+        ),
+        Index("ix_api_idempotency_expires_at", "expires_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    scope: Mapped[str] = mapped_column(String(100), nullable=False)
+    operation: Mapped[str] = mapped_column(String(80), nullable=False)
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    response_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class UserIdentity(Base):
     __tablename__ = "user_identities"
     __table_args__ = (

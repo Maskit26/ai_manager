@@ -286,6 +286,7 @@ async def _delete_project_rows(session: AsyncSession, project_id: str) -> None:
     for table in (
         "agent_drafts",
         "agent_releases",
+        "agent_slots",
         "agents",
         "products",
         "catalog_import_errors",

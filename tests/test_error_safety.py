@@ -15,6 +15,9 @@ def test_unhandled_http_errors_return_generic_response() -> None:
     response = TestClient(app, raise_server_exceptions=False).get("/fail")
 
     assert response.status_code == 500
-    assert response.json() == {"detail": "Internal server error"}
+    error = response.json()["error"]
+    assert error["code"] == "internal_error"
+    assert error["message"] == "Internal server error"
+    assert error["request_id"]
     assert "alice@example.com" not in response.text
     assert "private-token" not in response.text

@@ -2,7 +2,7 @@ import asyncio
 import io
 import os
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
@@ -18,6 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from ai_seller_core.core.config import Settings
 from ai_seller_core.dialog.session_service import close_session, open_or_resume_session
 from ai_seller_core.persistence.access_policy import AccountRole, Principal
+from ai_seller_core.persistence.idempotency_service import (
+    IdempotencyConflictError,
+    execute_idempotently,
+)
 from ai_seller_core.persistence.identity_service import (
     IdentityConflictError,
     link_account_identity,
@@ -201,7 +205,7 @@ def test_accounts_projects_postgresql_migrations() -> None:
                 await connection.run_sync(upgrade)
                 assert await connection.scalar(text("SELECT count(*) FROM alembic_version")) == 1
                 assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == (
-                    "20261204_dialog_assignments"
+                    "20261205_api_idempotency"
                 )
                 assert (
                     await connection.scalar(select(User.id).where(User.id == "user-1")) == "user-1"
@@ -1122,7 +1126,7 @@ def test_accounts_projects_postgresql_migrations() -> None:
 def test_agent_release_lifecycle_postgresql() -> None:
     import asyncio
     import os
-    from datetime import UTC, datetime, timedelta
+    from datetime import UTC, datetime
     from uuid import uuid4
 
     import pytest
@@ -1146,6 +1150,7 @@ def test_agent_release_lifecycle_postgresql() -> None:
         rollback_agent_release,
         save_agent_draft,
     )
+    from ai_seller_core.persistence.entitlements_service import EntitlementAccessError
     from ai_seller_core.persistence.models import (
         AgentRelease,
         ChatMessage,
@@ -1153,6 +1158,7 @@ def test_agent_release_lifecycle_postgresql() -> None:
         DomainEvent,
         OutboxMessage,
     )
+    from ai_seller_core.persistence.project_service import create_project, update_project
     from ai_seller_core.persistence.session_lease import acquire_session_lease
 
     test_database_url = os.environ.pop("DATABASE_URL", None)
@@ -1216,16 +1222,91 @@ def test_agent_release_lifecycle_postgresql() -> None:
                         "VALUES ('agent-test-project', 'agent-test-channel')"
                     )
                 )
+                now = datetime.now(UTC)
+                plan_id = "agent-test-plan"
+                features = {
+                    "llm_calls_enabled": True,
+                    "catalog_import_enabled": True,
+                    "knowledge_base_enabled": False,
+                    "multi_channel_enabled": False,
+                }
+                limits = {
+                    "max_projects": 2,
+                    "max_catalog_sources_per_project": 2,
+                    "max_products_per_project": 10,
+                    "max_kb_documents_per_project": 0,
+                }
+                await connection.execute(
+                    insert(TariffPlan).values(
+                        id=plan_id,
+                        code=plan_id,
+                        version=1,
+                        name="Agent lifecycle test",
+                        is_active=True,
+                        included_agents=1,
+                        max_agents=3,
+                        features=features,
+                        limits=limits,
+                    )
+                )
+                await connection.execute(
+                    insert(Subscription).values(
+                        id="agent-test-subscription",
+                        account_id="agent-test-account",
+                        tariff_plan_id=plan_id,
+                        status="active",
+                        current_period_start=now - timedelta(days=1),
+                        current_period_end=now + timedelta(days=30),
+                        snapshot={
+                            "schema_version": 1,
+                            "features": features,
+                            "limits": limits,
+                            "included_agents": 1,
+                            "max_agents": 3,
+                        },
+                    )
+                )
+                await connection.execute(
+                    insert(DancoinBalance).values(
+                        account_id="agent-test-account",
+                        grant_balance=Decimal("3.00"),
+                    )
+                )
 
             async with AsyncSession(engine) as db:
                 async with db.begin():
                     await db.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+                    db.add(User(id="agent-test-owner"))
+                    await db.flush()
                     principal = Principal(
                         user_id="agent-test-owner",
                         account_id="agent-test-account",
                         role=AccountRole.OWNER,
                         scopes=frozenset(),
                     )
+                    created_project = await create_project(
+                        db,
+                        principal=principal,
+                        locale="ru-RU",
+                        timezone="Europe/Moscow",
+                    )
+                    assert created_project.settings == {}
+                    await update_project(
+                        db,
+                        principal=principal,
+                        project_id=created_project.id,
+                        locale="en-US",
+                    )
+                    assert created_project.locale == "en-US"
+                    with pytest.raises(EntitlementAccessError) as project_limit_error:
+                        await create_project(
+                            db,
+                            principal=principal,
+                            locale="en-US",
+                            timezone="UTC",
+                        )
+                    assert project_limit_error.value.code == "project_limit_exceeded"
+
                     with pytest.raises(LookupError, match="Project not found"):
                         await create_agent(
                             db,
@@ -1238,6 +1319,71 @@ def test_agent_release_lifecycle_postgresql() -> None:
                             project_id="agent-test-project",
                         )
                     await create_agent(db, principal=principal, project_id="agent-test-project")
+                    agent_slot = await db.get(AgentSlot, "agent-test-project")
+                    assert agent_slot is not None
+                    assert agent_slot.used_slots == 1
+
+                    idempotency_now = datetime.now(UTC)
+                    idempotency_calls = {"count": 0}
+
+                    async def first_idempotent_action() -> dict[str, str]:
+                        idempotency_calls["count"] += 1
+                        return {"result": "first"}
+
+                    first_response, first_replay = await execute_idempotently(
+                        db,
+                        scope="account:agent-test-account",
+                        operation="test.agent.create",
+                        key="agent-create-key",
+                        request_data={"project_id": "agent-test-project"},
+                        action=first_idempotent_action,
+                        now=idempotency_now,
+                    )
+                    assert first_response == {"result": "first"}
+                    assert not first_replay
+
+                    async def unexpected_action() -> dict[str, str]:
+                        raise AssertionError("an unexpired replay must not execute again")
+
+                    replay_response, replayed = await execute_idempotently(
+                        db,
+                        scope="account:agent-test-account",
+                        operation="test.agent.create",
+                        key="agent-create-key",
+                        request_data={"project_id": "agent-test-project"},
+                        action=unexpected_action,
+                        now=idempotency_now + timedelta(days=29),
+                    )
+                    assert replay_response == first_response
+                    assert replayed
+
+                    with pytest.raises(IdempotencyConflictError):
+                        await execute_idempotently(
+                            db,
+                            scope="account:agent-test-account",
+                            operation="test.agent.create",
+                            key="agent-create-key",
+                            request_data={"project_id": "different-project"},
+                            action=unexpected_action,
+                            now=idempotency_now + timedelta(days=29),
+                        )
+
+                    async def expired_action() -> dict[str, str]:
+                        idempotency_calls["count"] += 1
+                        return {"result": "second"}
+
+                    expired_response, expired_replay = await execute_idempotently(
+                        db,
+                        scope="account:agent-test-account",
+                        operation="test.agent.create",
+                        key="agent-create-key",
+                        request_data={"project_id": "agent-test-project"},
+                        action=expired_action,
+                        now=idempotency_now + timedelta(days=31),
+                    )
+                    assert expired_response == {"result": "second"}
+                    assert not expired_replay
+                    assert idempotency_calls["count"] == 2
 
                     with pytest.raises(ValueError, match="excluded field"):
                         await save_agent_draft(

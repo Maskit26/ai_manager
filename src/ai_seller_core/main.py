@@ -53,8 +53,19 @@ def create_app() -> FastAPI:
         debug=False,
         openapi_tags=[
             {"name": "health", "description": "Service health and readiness."},
-            {"name": "account", "description": "Current account context."},
-            {"name": "projects", "description": "Tenant-scoped project reads."},
+            {
+                "name": "account",
+                "description": "Current account context and membership management.",
+            },
+            {
+                "name": "onboarding",
+                "description": "Trusted server-to-server account provisioning.",
+            },
+            {
+                "name": "projects",
+                "description": "Tenant-scoped project management and lifecycle.",
+            },
+            {"name": "agents", "description": "Agent draft and release management."},
         ],
     )
     register_exception_handlers(app)

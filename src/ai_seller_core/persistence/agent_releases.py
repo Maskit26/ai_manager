@@ -6,7 +6,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_seller_core.persistence.access_policy import Principal, ProjectPermission
 from ai_seller_core.persistence.authorization_service import require_project_access
-from ai_seller_core.persistence.models import Agent, AgentDraft, AgentRelease
+from ai_seller_core.persistence.entitlements_service import check_access
+from ai_seller_core.persistence.models import Agent, AgentDraft, AgentRelease, Project
+
+
+class AgentConfigValidationError(ValueError):
+    """Raised when an agent config violates the persistence contract."""
+
+
+class AgentAlreadyExistsError(Exception):
+    """Raised when a project already has its single supported agent."""
+
 
 RELEASE_CONFIG_KEYS = frozenset(
     {
@@ -54,21 +64,25 @@ def _require_transaction(db: AsyncSession) -> None:
 
 def _validate_config(config: dict[str, Any], *, published: bool = False) -> None:
     if not isinstance(config, dict):
-        raise ValueError("Agent configuration must be a JSON object")
+        raise AgentConfigValidationError("Agent configuration must be a JSON object")
     unknown = config.keys() - RELEASE_CONFIG_KEYS
     if unknown:
-        raise ValueError(f"Unsupported agent configuration fields: {sorted(unknown)}")
+        raise AgentConfigValidationError(
+            f"Unsupported agent configuration fields: {sorted(unknown)}"
+        )
     _reject_excluded_fields(config)
     missing = RELEASE_CONFIG_KEYS - config.keys()
     if published and missing:
-        raise ValueError(f"Agent release is missing configuration fields: {sorted(missing)}")
+        raise AgentConfigValidationError(
+            f"Agent release is missing configuration fields: {sorted(missing)}"
+        )
 
 
 def _reject_excluded_fields(value: Any) -> None:
     if isinstance(value, dict):
         for key, nested_value in value.items():
             if not isinstance(key, str):
-                raise ValueError("Agent configuration object keys must be strings")
+                raise AgentConfigValidationError("Agent configuration object keys must be strings")
             normalized_key = key.casefold().replace("-", "_")
             if (
                 normalized_key in EXCLUDED_CONFIG_KEYS
@@ -77,7 +91,9 @@ def _reject_excluded_fields(value: Any) -> None:
                 or normalized_key.startswith("catalog_")
                 or normalized_key.startswith("knowledge_base")
             ):
-                raise ValueError(f"Agent configuration cannot contain excluded field {key!r}")
+                raise AgentConfigValidationError(
+                    f"Agent configuration cannot contain excluded field {key!r}"
+                )
             _reject_excluded_fields(nested_value)
     elif isinstance(value, list):
         for item in value:
@@ -87,12 +103,48 @@ def _reject_excluded_fields(value: Any) -> None:
 async def create_agent(db: AsyncSession, *, principal: Principal, project_id: str) -> Agent:
     _require_transaction(db)
     await require_project_access(db, principal, project_id, permission=ProjectPermission.MANAGE)
+    locked_project = await db.scalar(
+        select(Project).where(Project.id == project_id).with_for_update()
+    )
+    if locked_project is None:
+        raise LookupError("Project not found")
+    existing_agent_id = await db.scalar(select(Agent.id).where(Agent.project_id == project_id))
+    if existing_agent_id is not None:
+        raise AgentAlreadyExistsError("Project already has an agent")
+    await check_access(
+        db,
+        account_id=principal.account_id,
+        action="agent_create",
+        project_id=project_id,
+    )
     agent = Agent(project_id=project_id, status="draft")
     db.add(agent)
     await db.flush()
     db.add(AgentDraft(project_id=project_id, agent_id=agent.id, config={}))
     await db.flush()
     return agent
+
+
+async def get_agent_state(
+    db: AsyncSession,
+    *,
+    principal: Principal,
+    project_id: str,
+) -> tuple[Agent, AgentDraft]:
+    _require_transaction(db)
+    await require_project_access(db, principal, project_id, permission=ProjectPermission.READ)
+    agent = await db.scalar(select(Agent).where(Agent.project_id == project_id))
+    if agent is None:
+        raise LookupError("Agent not found")
+    draft = await db.scalar(
+        select(AgentDraft).where(
+            AgentDraft.project_id == project_id,
+            AgentDraft.agent_id == agent.id,
+        )
+    )
+    if draft is None:
+        raise RuntimeError(f"Agent draft is missing for project {project_id}")
+    return agent, draft
 
 
 async def save_agent_draft(
@@ -104,6 +156,12 @@ async def save_agent_draft(
 ) -> AgentDraft:
     _require_transaction(db)
     await require_project_access(db, principal, project_id, permission=ProjectPermission.MANAGE)
+    await check_access(
+        db,
+        account_id=principal.account_id,
+        action="configuration",
+        project_id=project_id,
+    )
     _validate_config(config)
     agent = await db.scalar(select(Agent).where(Agent.project_id == project_id).with_for_update())
     if agent is None:
@@ -131,6 +189,12 @@ async def publish_agent_release(
 ) -> AgentRelease:
     _require_transaction(db)
     await require_project_access(db, principal, project_id, permission=ProjectPermission.MANAGE)
+    await check_access(
+        db,
+        account_id=principal.account_id,
+        action="configuration",
+        project_id=project_id,
+    )
     agent = await db.scalar(select(Agent).where(Agent.project_id == project_id).with_for_update())
     if agent is None:
         raise LookupError(f"No agent exists for project {project_id!r}")
@@ -175,6 +239,12 @@ async def rollback_agent_release(
 ) -> None:
     _require_transaction(db)
     await require_project_access(db, principal, project_id, permission=ProjectPermission.MANAGE)
+    await check_access(
+        db,
+        account_id=principal.account_id,
+        action="configuration",
+        project_id=project_id,
+    )
     agent = await db.scalar(select(Agent).where(Agent.project_id == project_id).with_for_update())
     if agent is None:
         raise LookupError(f"No agent exists for project {project_id!r}")

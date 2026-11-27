@@ -48,6 +48,8 @@ _AUDIT_DIFF_FIELDS_BY_ACTION = {
     "escalation.auto_assigned": {"user_id"},
     "escalation.resolved": {"user_id", "status"},
     "project.deletion_requested": {"from_status", "to_status"},
+    "project.created": {"to_status"},
+    "project.updated": {"changed_fields"},
     "project.restored": {"from_status", "to_status"},
     "retention.expired": set(),
     "retention.retained": set(),

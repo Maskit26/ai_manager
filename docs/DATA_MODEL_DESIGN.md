@@ -174,19 +174,30 @@
 
 ### API foundation — Часть 4 (реализовано частично)
 
-В `create_app()` подключён версионированный router `/api/v1`. Реализованы read-only endpoints:
+В `create_app()` подключён версионированный router `/api/v1`. Реализованы:
 
-| Method | Path | Данные ответа |
+| Method | Path | Назначение |
 |---|---|---|
-| `GET` | `/api/v1/account` | `id`, `status` текущего account |
-| `GET` | `/api/v1/projects` | Список проектов текущего account; необязательный точный фильтр `status` |
-| `GET` | `/api/v1/projects/{project_id}` | `id`, `locale`, `timezone`, `status` проекта |
+| `GET` | `/api/v1/account` | Текущий account по principal |
+| `GET`, `POST` | `/api/v1/account/members` | Список и добавление membership |
+| `PATCH`, `DELETE` | `/api/v1/account/members/{user_id}` | Изменение роли/статуса и удаление membership |
+| `POST` | `/api/v1/internal/onboarding/accounts` | Server-to-server provisioning account, user, identity и owner membership |
+| `GET`, `POST` | `/api/v1/projects` | Список и создание проектов |
+| `GET`, `PATCH`, `DELETE` | `/api/v1/projects/{project_id}` | Чтение, изменение и запрос удаления проекта |
+| `POST` | `/api/v1/projects/{project_id}/archive` | Архивация проекта с retention-запросом |
+| `POST` | `/api/v1/projects/{project_id}/restore` | Восстановление проекта |
+| `GET`, `POST` | `/api/v1/projects/{project_id}/agent` | Чтение и создание одного агента проекта |
+| `PATCH` | `/api/v1/projects/{project_id}/agent/draft` | Сохранение черновика агента |
+| `POST` | `/api/v1/projects/{project_id}/agent/publish` | Создание release snapshot |
+| `POST` | `/api/v1/projects/{project_id}/agent/rollback` | Переключение active release |
 
-Доступ к маршрутам использует request-scoped DB-сессию и `Principal` с проверкой scopes. Проекты ограничиваются текущим account; чужой или отсутствующий проект скрывается ответом `404`. DTO не возвращают `Project.settings` или другие внутренние поля.
+Маршруты используют request-scoped DB-сессию и типизированный `Principal`/scopes. Роли, проверка tenant ownership и операции membership/project/agent остаются в persistence services; DTO проектов не раскрывают `Project.settings`. Список account members ограничен `owner`/`admin`. Onboarding защищён отдельным `ONBOARDING_SERVER_CREDENTIAL` (не менее 32 символов) и не использует пользовательский JWT. Создание проекта проверяет активную подписку и `max_projects`; изменение настроек проекта и agent draft/release проверяют `configuration` entitlement (активная подписка или configuration grace period). Agent create атомарно проверяет Entitlements Engine и резервирует `agent_slots`; project purge удаляет принадлежащую проекту строку слота.
 
-Для API зарегистрирован общий error envelope, OpenAPI содержит схемы ошибок и примеры. HTTP-обработчик формирует единый ответ для статусов `400`, `401`, `402`, `403`, `404`, `409`, `413`, `415`, `422` и `429`; доменные ошибки аутентификации/авторизации, отсутствующего ресурса и конфликта отображаются соответственно в `401`, `403`, `404` и `409`, validation error — в `422`, необработанная ошибка — в `500`. `402` пока не подключён к проверкам Entitlements Engine. Проверки API выполняются с fake DB dependency без реального PostgreSQL и внешних сервисов.
+Для повторяемых изменений используется `Idempotency-Key` (до 200 символов). Таблица `api_idempotency_records` хранит хэши ключа и тела, JSON-ответ и `expires_at`; одинаковый ключ/тело повторно выдаёт сохранённый результат, другое тело даёт `409`. Срок хранения — 30 дней; просроченные записи удаляются функцией retention scheduler и при повторном обращении с истёкшим ключом.
 
-Остальная API-часть ТЗ — account membership и write endpoints, управление диалогами/сообщениями, операции и их polling, webhook, real-time канал, billing и ограничения запросов — в эту основу пока не входит. Их требования и открытые решения остаются в `API_CONTRACT.md`; наличие persistence-модели само по себе не означает наличия соответствующего endpoint.
+Для API зарегистрирован общий error envelope. Доменные ошибки auth/authorization/not-found/conflict/agent-config validation отображаются как `401`/`403`/`404`/`409`/`422`; entitlement errors сохраняют доменные `402`/`403`/`404` и код ошибки. Отсутствующая конфигурация onboarding отвечает `503`.
+
+Окончательный project purge работает fail-closed: если Qdrant не настроен, retention-запрос остаётся `pending` (чтобы не оставить vector points без владельца); завершить его можно после подключения vector store. Проверки API выполняются с fake DB dependency; отдельные PostgreSQL-тесты проверяют миграции, agent entitlement/slot reservation, 30-дневную идемпотентность и retention purge. Реальные внешние сервисы не требуются для API-тестов. API для channels, catalog, knowledge base, leads, analytics, диалогов/сообщений, webhook, real-time и billing пока не добавлен: для соответствующих доменов ещё не подготовлены необходимые application services/контракты. Требования и оставшиеся решения см. в `API_CONTRACT.md`.
 
 ## 7. Решения, которые ТЗ оставляет открытыми
 

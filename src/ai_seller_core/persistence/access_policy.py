@@ -37,9 +37,10 @@ _MANAGEABLE_ROLES: dict[AccountRole, frozenset[AccountRole]] = {
     AccountRole.OPERATOR: frozenset(),
 }
 
+_OWNER_ADMIN_ROLES = frozenset({AccountRole.OWNER, AccountRole.ADMIN})
 _PROJECT_ROLES: dict[ProjectPermission, frozenset[AccountRole]] = {
-    ProjectPermission.READ: frozenset({AccountRole.OWNER, AccountRole.ADMIN}),
-    ProjectPermission.MANAGE: frozenset({AccountRole.OWNER, AccountRole.ADMIN}),
+    ProjectPermission.READ: _OWNER_ADMIN_ROLES,
+    ProjectPermission.MANAGE: _OWNER_ADMIN_ROLES,
 }
 
 
@@ -50,6 +51,10 @@ def can_manage_roles(actor_role: AccountRole, roles: Iterable[AccountRole]) -> b
 
 def can_access_project(role: AccountRole, permission: ProjectPermission) -> bool:
     return role in _PROJECT_ROLES[permission]
+
+
+def can_read_account_members(role: AccountRole) -> bool:
+    return role in _OWNER_ADMIN_ROLES
 
 
 def missing_scopes(principal: Principal, required_scopes: Iterable[str]) -> frozenset[str]:

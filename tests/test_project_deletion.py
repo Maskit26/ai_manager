@@ -17,6 +17,7 @@ from ai_seller_core.core.config import Settings
 from ai_seller_core.persistence import project_deletion, retention
 from ai_seller_core.persistence.models import (
     Account,
+    AgentSlot,
     AuditLog,
     Channel,
     Project,
@@ -35,6 +36,7 @@ from ai_seller_core.persistence.retention import purge_expired_activity
 PROJECT_SCOPED_TABLES = (
     "agent_drafts",
     "agent_releases",
+    "agent_slots",
     "agents",
     "audit_log",
     "background_jobs",
@@ -167,6 +169,8 @@ def test_project_deletion_postgresql_is_retryable_and_removes_orphans(monkeypatc
                         status="active",
                     )
                     session.add(project)
+                    await session.flush()
+                    session.add(AgentSlot(project_id=project_id, slot_limit=1, used_slots=1))
                     await session.flush()
                     session.add(Channel(project_id=project_id, channel_id="web"))
                     await session.flush()

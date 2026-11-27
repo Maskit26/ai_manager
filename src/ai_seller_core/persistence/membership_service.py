@@ -14,6 +14,7 @@ from ai_seller_core.persistence.access_policy import (
     ProjectPermission,
     can_access_project,
     can_manage_roles,
+    can_read_account_members,
 )
 from ai_seller_core.persistence.application_models import AuditLog, Escalation
 from ai_seller_core.persistence.authorization_service import (
@@ -130,6 +131,29 @@ async def get_active_membership_role(
         )
     )
     return None if role is None else AccountRole(role)
+
+
+async def list_account_memberships(
+    session: AsyncSession,
+    *,
+    account_id: str,
+    actor_user_id: str,
+) -> list[AccountMembership]:
+    _require_transaction(session)
+    actor_role = await get_active_membership_role(
+        session,
+        account_id=account_id,
+        user_id=actor_user_id,
+    )
+    if actor_role is None or not can_read_account_members(actor_role):
+        raise AuthorizationError("Actor cannot read account memberships")
+
+    result = await session.scalars(
+        select(AccountMembership)
+        .where(AccountMembership.account_id == account_id)
+        .order_by(AccountMembership.user_id)
+    )
+    return list(result.all())
 
 
 async def _authorize(
@@ -372,6 +396,8 @@ async def set_member_status(
     await _authorize(
         session, account_id=account_id, actor_user_id=actor_user_id, roles={current_role}
     )
+    if current_role is AccountRole.OWNER and requested is AccessStatus.DISABLED:
+        raise MembershipError("Account owner cannot be disabled")
     current = AccessStatus(membership.status)
     if current == requested:
         return membership

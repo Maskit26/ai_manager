@@ -98,9 +98,9 @@ Authorization: Bearer <server-to-server-credential>
 Idempotency-Key: <key>
 ```
 
-Он создаёт account, backend user, Bitrix identity mapping и initial owner membership. Это отдельная server-to-server аутентификация, не пользовательский JWT. Credential хранится только на доверенных backend-серверах.
+Он создаёт account, backend user, Bitrix identity mapping и initial owner membership. Это отдельная server-to-server аутентификация, не пользовательский JWT. Credential передаётся только в `Authorization: Bearer`, хранится в deployment setting `ONBOARDING_SERVER_CREDENTIAL` и не выдаётся браузеру. Значение должно содержать не менее 32 символов; при отсутствии настройки endpoint отвечает `503`, при неверном credential — `401`.
 
-**TBD:** механизм выпуска/ротации credential, его владельцы и deployment-конфигурация. До согласования onboarding endpoint не должен быть доступен браузерному клиенту.
+Тело содержит `identity_provider` (по умолчанию `bitrix`), `external_account_id` и `external_owner_id`. Успешный ответ (`200`) содержит canonical `account_id`, `owner_user_id` и `owner_membership_created`. Повтор с тем же ключом и телом возвращает сохранённый результат.
 
 ### Webhooks
 
@@ -174,7 +174,7 @@ Scopes проверяются вместе с текущей ролью из bac
 
 ### Idempotency-Key
 
-Для повторяемых `POST`-операций предлагается заголовок `Idempotency-Key`. Он обязателен для:
+Для повторяемых изменяющих операций используется заголовок `Idempotency-Key` длиной 1–200 символов. Он обязателен для:
 
 - первичного provisioning;
 - создания ресурса или заявки;
@@ -182,9 +182,9 @@ Scopes проверяются вместе с текущей ролью из bac
 - приёма frontend-сообщения;
 - операторского сообщения/заметки, если запрос может безопасно повториться после timeout.
 
-Для webhook dedupe выполняется по provider event ID и channel/project; повторное событие не создаёт второе входящее сообщение или job. Повтор с тем же ключом и тем же телом возвращает исходный результат; тот же ключ с другим телом — `409`.
+Дополнительно ключ обязателен для изменяющих account membership, project и agent draft/release API. Для webhook dedupe выполняется по provider event ID и channel/project; повторное событие не создаёт второе входящее сообщение или job. Повтор с тем же ключом и тем же телом возвращает исходный результат; тот же ключ с другим телом — `409`.
 
-Текущая БД ограничивает `idempotency_key` и `provider_event_id` длиной 200 символов. Предлагается не принимать более 200 символов без отдельной миграции; формат ключа и период хранения — TBD. Если официальный provider event ID может быть длиннее, потребуется расширить колонку до подключения этого provider.
+Результат и отпечатки ключа/тела хранятся 30 дней; после истечения срока ключ может быть использован для новой операции. Если официальный provider event ID длиннее 200 символов, потребуется расширить соответствующую колонку до подключения provider.
 
 ### Статус операции
 
@@ -307,7 +307,7 @@ GET /api/v1/ws
 ### Account и membership
 
 | Method | Path | Назначение |
-|---|---|---|
+|---|---|---|---|---|
 | `GET` | `/api/v1/account` | Текущий account по principal |
 | `GET` | `/api/v1/account/members` | Список участников |
 | `POST` | `/api/v1/account/members` | Добавление участника |
@@ -316,7 +316,9 @@ GET /api/v1/ws
 
 Здесь `member` означает участника команды **аккаунта** (tenant), а не участника клиентского диалога. Это запись `account_memberships`, привязанная к canonical backend user из `users`; внешний Bitrix ID хранится отдельно в `user_identities` и разрешается через identity mapping. Роли: `owner`, `admin`, `operator`; состояние membership: `active` или `disabled`.
 
-Добавление account member не назначает его автоматически на проекты или диалоги. Доступ оператора к диалогам регулируется отдельно назначениями проекта/диалога. Предлагаемое тело `POST /api/v1/account/members` принимает canonical backend `user_id` и требуемую роль; `account_id` берётся из principal, а не из запроса.
+`GET` списка доступен `owner`/`admin` со scope `members:read`; изменения используют `members:write`, а решения о роли и tenant применяют membership services. `POST` принимает canonical backend `user_id` и роль `admin` или `operator`; `PATCH` принимает ровно одно поле `role` или `status`; `DELETE` удаляет membership. `account_id` всегда берётся из principal, не из запроса.
+
+Добавление account member не назначает его автоматически на проекты или диалоги. Доступ оператора к диалогам регулируется отдельно назначениями проекта/диалога.
 
 Правила ролей реализуются существующими membership services. Владелец и администратор не взаимозаменяемы; запрет на удаление/понижение последнего owner сохраняется.
 
@@ -332,22 +334,25 @@ GET /api/v1/ws
 | `DELETE` | `/api/v1/projects/{project_id}` | Запрос удаления/retention flow |
 | `POST` | `/api/v1/projects/{project_id}/restore` | Восстановление в установленный период |
 
-Все операции проверяют `project.account_id == principal.account_id`. Удаление и восстановление используют существующую persistence-логику; публичные маршруты требуются backlog item Части 4.
+Создание принимает только `locale` и `timezone`; сервер создаёт проект со `settings={}` и `status="active"`. Создание проверяет активную подписку, `project_create` entitlement и квоту `max_projects`; отсутствие разрешающей подписки возвращает `402`, превышение квоты — `403`. PATCH меняет только `locale`/`timezone` и проверяет `configuration` entitlement: активная подписка или configuration grace period. Чтение требует `projects:read`, изменения — `projects:write`; сервис проверяет роль и `project.account_id == principal.account_id`.
+
+`POST .../archive` и `DELETE /api/v1/projects/{project_id}` создают retention-запрос и отвечают `202` со статусом проекта `archived` и статусом удаления `pending`. Восстановление отвечает проектом при допустимом состоянии retention-запроса; конфликт состояния отображается как `409`.
 
 ### Agent, channels, catalog, knowledge base, leads, analytics
 
-Первоначальный маршрутный inventory:
+Реализуемый API agent draft/release:
 
-| Область | Предлагаемый path prefix |
+| Method | Path | Назначение |
 |---|---|
-| Agent draft/release | `/api/v1/projects/{project_id}/agent` |
-| Channels | `/api/v1/projects/{project_id}/channels` |
-| Catalog | `/api/v1/projects/{project_id}/catalog` |
-| Knowledge base | `/api/v1/projects/{project_id}/knowledge` |
-| Leads | `/api/v1/projects/{project_id}/leads` |
-| Analytics | `/api/v1/projects/{project_id}/analytics` |
+| `GET` | `/api/v1/projects/{project_id}/agent` | Текущий агент и draft |
+| `POST` | `/api/v1/projects/{project_id}/agent` | Создание одного агента проекта |
+| `PATCH` | `/api/v1/projects/{project_id}/agent/draft` | Сохранение draft config |
+| `POST` | `/api/v1/projects/{project_id}/agent/publish` | Публикация неизменяемого release snapshot |
+| `POST` | `/api/v1/projects/{project_id}/agent/rollback` | Переключение active release |
 
-Подробные методы и поля payload — TBD после сверки с application services каждого модуля. Для длительного импорта, публикации или обработки документа возвращается `202` и operation ID. Секреты channel credentials никогда не возвращаются в read DTO.
+Чтение требует `agents:read`, изменения — `agents:write`; доступ к проекту и tenant проверяются сервисами. Создание агента транзакционно проверяет `agent_create` entitlement и резервирует слот. Сохранение draft, публикация и rollback проверяют `configuration` entitlement: активная подписка или configuration grace period. Отсутствие разрешающей подписки возвращает `402`, превышение project/agent limit или неактивный проект — `403`. Draft/release config допускает только `prompt`, `tone`, `model_settings`, `sales_rules`, `functions`, `response_settings`; secret-like поля и credentials запрещены.
+
+`Channels`, `catalog`, `knowledge`, `leads` и `analytics` остаются в route inventory, но endpoints не создаются до готовности соответствующих application services. Не добавлять заглушки или переносить доменную логику в роутеры. Для длительного импорта или обработки документа после появления сервисов возвращается `202` и operation ID. Секреты channel credentials никогда не возвращаются в read DTO.
 
 ### Billing
 
