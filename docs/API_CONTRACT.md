@@ -240,24 +240,26 @@ POST /api/v1/webhooks/{provider}/{channel_id}
 
 `message_id`/`dialog_id` могут быть `null`, пока worker не создал сообщение/сессию. После обработки доступен `operation_id` и событие по WebSocket/история диалога.
 
-### Предлагаемые dialog endpoints
+### Dialog endpoints
 
 | Method | Path | Назначение | Режим |
 |---|---|---|---|
 | `GET` | `/api/v1/projects/{project_id}/dialogs` | Список доступных диалогов; фильтры по статусу/назначению | Синхронно |
 | `GET` | `/api/v1/dialogs/{dialog_id}` | Метаданные доступного диалога | Синхронно |
 | `GET` | `/api/v1/dialogs/{dialog_id}/messages` | История сообщений с cursor pagination | Синхронно |
-| `POST` | `/api/v1/projects/{project_id}/dialogs` | Запросить создание/поиск диалога через worker; не создаёт сессию в HTTP handler | `202` |
-| `POST` | `/api/v1/dialogs/{dialog_id}/messages` | Операторское сообщение; автор берётся из principal, не из body | `202`; заблокировано до миграции role model |
-| `POST` | `/api/v1/dialogs/{dialog_id}/notes` | Операторская заметка/системное уведомление | `202`; заблокировано до миграции role model |
+| `POST` | `/api/v1/projects/{project_id}/dialogs` | Принять сообщение через authenticated API; InboxEvent и job создаются в одной транзакции | `202` |
+| `POST` | `/api/v1/dialogs/{dialog_id}/messages` | Поставить операторское сообщение в worker/Outbox | `202` |
+| `POST` | `/api/v1/dialogs/{dialog_id}/notes` | Поставить внутреннюю системную заметку в worker | `202` |
 
-Для операторского доступа проверяется account/project/dialog scope и назначение, если оно обязательно по роли. Поле `role` в запросе не принимается от клиента.
+`POST /projects/{project_id}/dialogs` требует `dialogs:write` и project-manager права. Тело содержит `channel_id`, `customer_id`, `external_chat_id`, `text` и необязательный `external_message_id`. `Idempotency-Key` обязателен и используется как `provider_event_id`; HTTP idempotency и уникальность Inbox предотвращают повторное создание задания. Ответ `202` содержит `status`, `event_id` и признак `duplicate`. HTTP handler не создаёт `DialogSession`; его создаёт worker при обработке InboxEvent.
 
-**Блокер реализации:** текущий `ChatMessage.role` допускает только `user` и `assistant`; для требований ТЗ о различении сообщений `operator`/`system` потребуется согласовать модель, аудит и миграцию до реализации соответствующих write endpoints.
+Операторское сообщение и системная заметка требуют `dialogs:write` и доступа к конкретному диалогу. Owner/admin видят диалоги своего account; operator — только назначенные ему активные диалоги. Автор сообщения определяется из principal; поле `role` в запросе не принимается. Оба запроса требуют `Idempotency-Key`, фиксируются как durable job и возвращают `202` с `job_id`. Worker сохраняет `operator` message и создаёт Outbox delivery; `system` note сохраняется внутри истории, не доставляется клиенту и имеет `delivery_status=not_required`.
+
+Роли `user`, `assistant`, `operator`, `system` и статус `not_required` добавлены миграцией `20261207_dialog_message_roles`. Outbox ссылается на соответствующее исходящее сообщение через `chat_message_id`, что позволяет обновлять его delivery status после доставки.
 
 ### Пагинация
 
-Предлагается opaque cursor, стабильный порядок по `(created_at, id)`, параметры `limit` и `cursor`, ответ:
+Списки диалогов и история сообщений используют opaque cursor с размером страницы по умолчанию 50 и максимум 100. Для диалогов стабильный порядок — `(last_activity_at, id)` по убыванию; для сообщений — `(created_at, id)` по убыванию, при этом элементы страницы возвращаются хронологически. `next_cursor` запрашивает более старую страницу. Ответ:
 
 ```json
 {
@@ -266,7 +268,7 @@ POST /api/v1/webhooks/{provider}/{channel_id}
 }
 ```
 
-Размер страницы по умолчанию и максимум — TBD.
+Provider webhooks без JWT, проверка подписей MAX/Telegram и provider-specific декодеры в текущем API не входят; они остаются отдельной задачей backlog. В development/local/test worker использует fake runtime и fake delivery adapter; production/staging адаптеры подключаются отдельной задачей.
 
 ## 7. WebSocket
 

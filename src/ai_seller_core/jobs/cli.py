@@ -5,6 +5,7 @@ import signal
 from collections.abc import Iterator
 from contextlib import contextmanager
 from types import FrameType
+from uuid import uuid4
 
 from ai_seller_core.core.config import Settings, get_settings
 from ai_seller_core.core.logging import configure_logging
@@ -14,9 +15,17 @@ from ai_seller_core.persistence.base import database_lifespan, get_session_facto
 logger = logging.getLogger(__name__)
 
 
-def build_handlers() -> dict[str, JobHandler]:
-    # No concrete inbox/outbox adapters are available to register yet.
-    return {}
+def build_handlers(*, settings: Settings, worker_id: str) -> dict[str, JobHandler]:
+    if settings.app_env not in {"local", "development", "test"}:
+        return {}
+    from ai_seller_core.jobs.development_handlers import build_development_handlers
+
+    logger.warning("Using development dialog runtime and fake outbound delivery")
+    return build_development_handlers(
+        worker_id=worker_id,
+        lease_seconds=settings.job_lease_seconds,
+        session_factory=get_session_factory(),
+    )
 
 
 @contextmanager
@@ -51,10 +60,11 @@ async def _run_worker(
 
     with _shutdown_signals(stop_event):
         async with database_lifespan(settings):
+            effective_worker_id = worker_id or f"{queue}-{uuid4().hex}"
             worker = Worker(
                 queue=queue,
-                handlers=build_handlers(),
-                worker_id=worker_id,
+                handlers=build_handlers(settings=settings, worker_id=effective_worker_id),
+                worker_id=effective_worker_id,
                 settings=settings,
                 session_factory=get_session_factory(),
             )

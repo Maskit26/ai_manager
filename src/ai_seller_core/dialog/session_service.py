@@ -29,6 +29,7 @@ class MessageInput:
     role: str
     content: dict[str, Any]
     external_message_id: str | None = None
+    id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -302,7 +303,7 @@ async def commit_turn(
     inbound_message: ChatMessage | None = None
     if inbound is not None:
         values = {
-            "id": str(uuid4()),
+            "id": inbound.id or str(uuid4()),
             "project_id": dialog.project_id,
             "session_id": dialog.id,
             "channel_id": dialog.channel_id,
@@ -332,7 +333,7 @@ async def commit_turn(
     outbox_ids: list[str] = []
     for message_input, intent in zip(outbound, outbox, strict=True):
         message = ChatMessage(
-            id=str(uuid4()),
+            id=message_input.id or str(uuid4()),
             project_id=dialog.project_id,
             session_id=dialog.id,
             channel_id=dialog.channel_id,
@@ -349,6 +350,7 @@ async def commit_turn(
             project_id=dialog.project_id,
             channel_id=dialog.channel_id,
             session_id=dialog.id,
+            chat_message_id=message.id,
             payload=intent.payload,
             idempotency_key=intent.idempotency_key,
             correlation_id=intent.correlation_id,
@@ -382,3 +384,59 @@ async def commit_turn(
         outbound_messages=tuple(out_messages),
         outbox_ids=tuple(outbox_ids),
     )
+
+
+async def commit_internal_message(
+    db: AsyncSession,
+    *,
+    lease: SessionLease,
+    message: MessageInput,
+    correlation_id: str | None = None,
+) -> ChatMessage:
+    if not db.in_transaction():
+        raise RuntimeError("Internal messages must be committed inside an active transaction")
+    if message.role != "system":
+        raise ValueError("Only system messages can be committed without an outbox")
+
+    await assert_current_fence(db, lease=lease)
+    dialog = await db.scalar(
+        select(DialogSession)
+        .where(
+            DialogSession.id == lease.session_id,
+            DialogSession.project_id == lease.project_id,
+        )
+        .with_for_update()
+    )
+    if dialog is None:
+        raise LookupError(f"Dialog session {lease.session_id!r} does not exist")
+    if dialog.state != "active":
+        raise RuntimeError("Cannot commit an internal message to a closed dialog session")
+
+    chat_message = ChatMessage(
+        id=message.id or str(uuid4()),
+        project_id=dialog.project_id,
+        session_id=dialog.id,
+        channel_id=dialog.channel_id,
+        role="system",
+        content=message.content,
+        external_message_id=message.external_message_id,
+        delivery_status="not_required",
+    )
+    db.add(chat_message)
+
+    committed_at = datetime.now(UTC)
+    dialog.last_activity_at = committed_at
+    dialog.version += 1
+    dialog.lease_owner = None
+    dialog.lease_until = None
+    _record_domain_event(
+        db,
+        project_id=dialog.project_id,
+        session_id=dialog.id,
+        event_type="dialog.internal_message_committed",
+        correlation_id=correlation_id,
+        payload={"sequence": dialog.version, "message_id": chat_message.id},
+        occurred_at=committed_at,
+    )
+    await db.flush()
+    return chat_message

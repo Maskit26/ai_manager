@@ -243,6 +243,128 @@ class AgentRollbackRequest(BaseModel):
     )
 
 
+class DialogIngressRequest(BaseModel):
+    channel_id: str = Field(min_length=1, max_length=100)
+    customer_id: str = Field(min_length=1, max_length=100)
+    external_chat_id: str = Field(min_length=1, max_length=200)
+    external_message_id: str | None = Field(default=None, max_length=200)
+    text: str = Field(min_length=1, max_length=20_000)
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "examples": [
+                {
+                    "channel_id": "max-channel-1",
+                    "customer_id": "customer-42",
+                    "external_chat_id": "chat-42",
+                    "external_message_id": "message-9001",
+                    "text": "Hello, I need help with an order.",
+                }
+            ]
+        },
+    )
+
+
+class DialogTextRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=20_000)
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"examples": [{"text": "Please check this order."}]},
+    )
+
+
+class DialogRead(BaseModel):
+    id: str
+    project_id: str
+    channel_id: str
+    customer_id: str
+    external_chat_id: str
+    release_id: str
+    state: Literal["active", "closed"]
+    last_activity_at: datetime
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+
+class DialogListResponse(BaseModel):
+    items: list[DialogRead]
+    next_cursor: str | None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class DialogMessageRead(BaseModel):
+    id: str
+    session_id: str
+    role: Literal["user", "assistant", "operator", "system"]
+    content: dict[str, Any]
+    delivery_status: Literal[
+        "received",
+        "pending",
+        "sending",
+        "sent",
+        "retrying",
+        "delivery_unknown",
+        "failed",
+        "not_required",
+    ]
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+
+class DialogMessagePageResponse(BaseModel):
+    items: list[DialogMessageRead]
+    next_cursor: str | None
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "examples": [{"items": [], "next_cursor": None}],
+        },
+    )
+
+
+class DialogIngressAccepted(BaseModel):
+    status: Literal["accepted"]
+    event_id: str | None
+    duplicate: bool
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "examples": [
+                {
+                    "status": "accepted",
+                    "event_id": "e7df7007-05eb-437b-98b2-3519d2c0146a",
+                    "duplicate": False,
+                }
+            ]
+        },
+    )
+
+
+class DialogWriteAccepted(BaseModel):
+    status: Literal["accepted"]
+    job_id: str
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "examples": [
+                {
+                    "status": "accepted",
+                    "job_id": "88e9c2ca-993b-4ce8-8655-323c7ae8f86c",
+                }
+            ]
+        },
+    )
+
+
 COMMON_ERROR_RESPONSES: dict[int, dict[str, Any]] = {
     400: {"model": ErrorResponse, "description": "Malformed request."},
     401: {"model": ErrorResponse, "description": "Authentication required."},

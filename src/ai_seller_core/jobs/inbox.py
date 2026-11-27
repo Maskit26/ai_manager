@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,7 +42,14 @@ async def ingest_channel_event(
     )
     event_id = await session.scalar(statement)
     if event_id is None:
-        return IngestResult(event_id=None, duplicate=True)
+        event_id = await session.scalar(
+            select(InboxEvent.id).where(
+                InboxEvent.project_id == project_id,
+                InboxEvent.channel_id == channel_id,
+                InboxEvent.provider_event_id == provider_event_id,
+            )
+        )
+        return IngestResult(event_id=event_id, duplicate=True)
 
     if event_type in {"message", "callback"}:
         await enqueue_job(

@@ -638,11 +638,18 @@ class OutboxMessage(Base):
             name="fk_outbox_project_channel",
             ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ["project_id", "session_id", "chat_message_id"],
+            ["chat_messages.project_id", "chat_messages.session_id", "chat_messages.id"],
+            name="fk_outbox_project_session_chat_message",
+            ondelete="CASCADE",
+        ),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     project_id: Mapped[str] = mapped_column(String(100), nullable=False)
     channel_id: Mapped[str] = mapped_column(String(100), nullable=False)
     session_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    chat_message_id: Mapped[str | None] = mapped_column(String(36))
     kind: Mapped[str] = mapped_column(
         String(80), nullable=False, default="outbound_message", server_default="outbound_message"
     )
@@ -817,12 +824,13 @@ class ChatMessage(Base):
         Index("ix_chat_messages_session_created", "session_id", "created_at"),
         Index("ix_chat_messages_project_created", "project_id", "created_at"),
         CheckConstraint(
-            "role IN ('user', 'assistant')",
+            "role IN ('user', 'assistant', 'operator', 'system')",
             name="ck_chat_messages_role",
         ),
         CheckConstraint(
             "delivery_status IN "
-            "('received', 'pending', 'sending', 'sent', 'retrying', 'delivery_unknown', 'failed')",
+            "('received', 'pending', 'sending', 'sent', 'retrying', "
+            "'delivery_unknown', 'failed', 'not_required')",
             name="ck_chat_messages_delivery_status",
         ),
         UniqueConstraint(

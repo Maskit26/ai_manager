@@ -36,6 +36,14 @@ AgentWriter = Annotated[
     Principal,
     Security(get_current_principal, scopes=["agents:write"]),
 ]
+DialogReader = Annotated[
+    Principal,
+    Security(get_current_principal, scopes=["dialogs:read"]),
+]
+DialogWriter = Annotated[
+    Principal,
+    Security(get_current_principal, scopes=["dialogs:write"]),
+]
 
 
 def require_idempotency_key(

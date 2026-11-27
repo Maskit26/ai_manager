@@ -1147,6 +1147,14 @@ F31 — механизм расширения, а не единый универ
 
 ---
 
+## Backlog: внешние webhook-провайдеры диалогов
+
+- Добавить публичные `POST /webhooks/{provider}/{channel_id}` endpoints для MAX/Telegram без пользовательского JWT.
+- Проверять provider signature/secret до сохранения события; не доверять `project_id` и `channel_id` из body.
+- Реализовать provider-specific декодеры в общий InboxEvent contract, дедупликацию по `(project_id, channel_id, provider_event_id)` и атомарное создание inbound job.
+- Добавить тесты корректной подписи, некорректной/повторной подписи, duplicate event, malformed payload и tenant isolation; проверить, что webhook endpoints не раскрывают секреты/PII в логах.
+- Подключить production runtime и provider delivery adapters отдельно от development fake runtime/delivery.
+
 ## Итоговые поставляемые артефакты
 
 - Исходный код API, worker и доменных компонентов.
